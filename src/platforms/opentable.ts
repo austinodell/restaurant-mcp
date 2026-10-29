@@ -26,12 +26,18 @@ export class OpenTablePlatformClient extends BasePlatformClient {
     const term = [query.query, query.location].filter(Boolean).join(' ').trim();
     const url = new URL('https://www.opentable.com/s');
     url.searchParams.set('term', term);
-    const response = await fetch(url, {
-      headers: {
-        Accept: 'text/html',
-        'User-Agent': 'Mozilla/5.0 (compatible; restaurant-mcp/2.0)',
-      },
-    });
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        headers: {
+          Accept: 'text/html',
+          'User-Agent': 'Mozilla/5.0 (compatible; restaurant-mcp/2.0)',
+        },
+        signal: AbortSignal.timeout(12000),
+      });
+    } catch {
+      throw new Error('OpenTable search timed out before returning results.');
+    }
     const html = await response.text();
     if (openTableBlocked(response.status, html)) {
       throw new Error('OpenTable blocked this request from Cloudflare (403 or bot challenge). Search is unavailable on this network.');

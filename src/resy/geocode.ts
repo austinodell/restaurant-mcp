@@ -27,6 +27,7 @@ export async function geocodeLocation(location: string): Promise<GeoPoint | null
 
   const response = await fetch(url, {
     headers: { 'User-Agent': USER_AGENT, Accept: 'application/json' },
+    signal: AbortSignal.timeout(8000),
   });
   if (!response.ok) return null;
 

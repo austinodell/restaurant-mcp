@@ -50,8 +50,12 @@ function slugCandidates(query: string): string[] {
 function nameMatches(query: string, venueName: string, slug: string): boolean {
   const q = fold(query);
   const name = fold(venueName);
+  const slugFold = fold(slug);
   if (!q || !name) return false;
-  return name === q || name.startsWith(q) || q === fold(slug) || slug === slugCandidates(query)[0];
+  if (name === q || name.startsWith(q)) return true;
+  if (slugFold === q && !/^(restaurants?|food|dinner|lunch|bar|bars)$/i.test(query.trim())) return true;
+  const words = query.toLowerCase().split(/[^a-z0-9]+/).filter((word) => word.length > 2);
+  return words.length > 1 && words.every((word) => name.includes(fold(word)));
 }
 
 function widgetDate(isoDate: string): string {
@@ -104,6 +108,7 @@ async function getJson(url: string): Promise<{ status: number; body: unknown }> 
       Accept: 'application/json',
       'User-Agent': 'restaurant-mcp/2.0',
     },
+    signal: AbortSignal.timeout(12000),
   });
   const text = await response.text();
   try {
@@ -117,6 +122,7 @@ export class SevenRoomsPlatformClient extends BasePlatformClient {
   readonly name: PlatformName = 'sevenrooms';
 
   async search(query: SearchQuery): Promise<Restaurant[]> {
+    if (/^(restaurants?|food|dinner|lunch|bar|bars)$/i.test(query.query.trim())) return [];
     const candidates = slugCandidates(query.query);
     for (const slug of candidates) {
       const venue = await this.fetchVenue(slug);

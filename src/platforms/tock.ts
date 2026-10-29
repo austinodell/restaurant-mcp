@@ -46,7 +46,28 @@ export function businessFromTockHtml(html: string, slug: string): SavedVenue | n
   return null;
 }
 
+function findDomainName(node: unknown, depth = 0): string | null {
+  if (depth > 8) return null;
+  if (Array.isArray(node)) {
+    for (const item of node) {
+      const found = findDomainName(item, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+  if (!isRecord(node)) return null;
+  if (typeof node.domainName === 'string' && /^[a-z0-9-]+$/i.test(node.domainName)) return node.domainName;
+  for (const value of Object.values(node)) {
+    const found = findDomainName(value, depth + 1);
+    if (found) return found;
+  }
+  return null;
+}
+
 export function slotsFromTockCalendar(data: unknown, date: string): TimeSlot[] {
+  const structured = slotsFromTicketGroups(data, date);
+  if (structured.length > 0) return structured;
+
   const slots: TimeSlot[] = [];
   const seen = new Set<string>();
 
@@ -86,6 +107,37 @@ export function slotsFromTockCalendar(data: unknown, date: string): TimeSlot[] {
   };
 
   visit(data);
+  return slots.sort((a, b) => a.time.localeCompare(b.time));
+}
+
+function slotsFromTicketGroups(data: unknown, date: string): TimeSlot[] {
+  const result = isRecord(data) && isRecord(data.result) ? data.result : data;
+  const byDay = isRecord(result) ? result.ticketGroupByBusinessDay : undefined;
+  if (!isRecord(byDay) || !isRecord(byDay[date])) return [];
+  const slots: TimeSlot[] = [];
+  const seen = new Set<string>();
+  const visit = (node: unknown) => {
+    if (Array.isArray(node)) {
+      for (const item of node) visit(item);
+      return;
+    }
+    if (!isRecord(node)) return;
+    if (typeof node.time === 'string' && (typeof node.availableTickets === 'number' || typeof node.numTickets === 'number')) {
+      const open = node.availableTickets !== 0 && node.soldOut !== true;
+      if (open && !seen.has(node.time)) {
+        seen.add(node.time);
+        slots.push({
+          slotId: `${date}-${node.time}`,
+          platform: 'tock',
+          time: normalizeTime(node.time),
+          type: typeof node.name === 'string' ? node.name : 'reservation',
+        });
+      }
+      return;
+    }
+    for (const value of Object.values(node)) visit(value);
+  };
+  visit(byDay[date]);
   return slots.sort((a, b) => a.time.localeCompare(b.time));
 }
 
@@ -175,7 +227,9 @@ export class TockPlatformClient extends BasePlatformClient {
       site: 'EXPLORETOCK',
       ...(venue.businessGroupId ? { businessGroupId: venue.businessGroupId } : {}),
     };
-    const response = await fetch(CALENDAR_URL, {
+    let response: Response;
+    try {
+    response = await fetch(CALENDAR_URL, {
       method: 'POST',
       headers: {
         Accept: 'application/json',
@@ -190,7 +244,11 @@ export class TockPlatformClient extends BasePlatformClient {
         date,
         partySize,
       }),
+      signal: AbortSignal.timeout(12000),
     });
+    } catch {
+      throw new Error('Tock calendar request timed out.');
+    }
     const text = await readText(response);
     if (challenged(response.status, text)) {
       throw new Error('Tock blocked this request from Cloudflare (HTTP challenge). Availability could not be read from this network.');
@@ -205,9 +263,10 @@ export class TockPlatformClient extends BasePlatformClient {
       throw new Error('Tock calendar returned a non-JSON response.');
     }
     const slots = slotsFromTockCalendar(body, date);
+    const slug = findDomainName(body) || venue.slug;
     return slots.map((slot) => ({
       ...slot,
-      bookingUrl: this.buildBookingUrl(venue.slug, date, partySize),
+      bookingUrl: this.buildBookingUrl(slug, date, partySize),
     }));
   }
 
@@ -260,6 +319,7 @@ export class TockPlatformClient extends BasePlatformClient {
     try {
       const response = await fetch(`${ORIGIN}/${encodeURIComponent(slug)}`, {
         headers: { Accept: 'text/html', 'User-Agent': 'restaurant-mcp/2.0' },
+        signal: AbortSignal.timeout(8000),
       });
       const html = await response.text();
       if (!challenged(response.status, html)) {
