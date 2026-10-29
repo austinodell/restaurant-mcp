@@ -73,7 +73,7 @@ export function createRestaurantId(platform: PlatformName, id: string | number):
  * Helper to extract platform and ID from a prefixed restaurant ID
  */
 export function parseRestaurantId(fullId: string): { platform: PlatformName; id: string } | null {
-  const platforms: PlatformName[] = ['resy', 'opentable', 'tock'];
+  const platforms: PlatformName[] = ['resy', 'opentable', 'tock', 'sevenrooms'];
 
   for (const platform of platforms) {
     const prefix = `${platform}-`;

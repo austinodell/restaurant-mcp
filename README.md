@@ -138,7 +138,8 @@ The sniper will:
 
 | Tool | Description |
 |------|-------------|
-| `search_restaurants` | Search restaurants by name/location on Resy and/or OpenTable |
+| `search_restaurant` | Search Resy, OpenTable, and SevenRooms. Tock only returns saved venues |
+| `add_tock_venue` | Store a Tock slug and business id for availability |
 | `check_availability` | Get available time slots for a restaurant |
 | `make_reservation` | Book a reservation |
 | `list_reservations` | View your upcoming reservations |
@@ -164,13 +165,27 @@ The sniper will:
 
 ### Resy
 - Full booking support via unofficial API
+- Search is geocoded and limited with `geo.radius` in meters
+- Upcoming reservations come from `GET /3/user/reservations?type=upcoming` and include `resy_token`
+- Cancel is `POST /3/cancel` with that `resy_token` (a numeric reservation id is looked up first)
 - Automatic token refresh when expired
-- Can view and cancel reservations
 
 ### OpenTable
-- Search and availability work without auth
+- Search reads the public results page (`/s?term=`) without auth and includes a booking link
+- If Cloudflare answers with a 403 or challenge, search reports that it was blocked
+- Availability is unchanged
 - **Cannot complete booking via API** - returns a URL to finish on OpenTable's website
-- Reservation listing not available
+
+### SevenRooms
+- Availability uses the public widget range API
+- Search resolves a name only when it matches a venue URL key such as `rezdora` or `nobu`
+- Booking returns `https://www.sevenrooms.com/reservations/<slug>`
+
+### Tock
+- Availability is `POST /api/consumer/calendar/full/v2` with an `x-tock-scope` business id
+- Public pages are often challenged, so save `slug` + `business_id` with `add_tock_venue` when a slug cannot be resolved
+- There is no public directory search; search only returns venues saved in KV
+- Booking stays a link
 
 ## Troubleshooting
 

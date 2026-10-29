@@ -9,6 +9,7 @@ import type {
   ResyBookDetailsResponse,
 } from './types.js';
 import { parseResySearchBody } from './search-results.js';
+import { findResyToken, parseResyReservations } from './reservations.js';
 
 const BASE_URL = 'https://api.resy.com';
 
@@ -251,32 +252,46 @@ export class ResyClient {
   }
 
   async getReservations(): Promise<ResyReservation[]> {
-    interface ReservationsResponse {
-      reservations: Array<{
-        resy_token: string;
-        venue: { name: string; location: { name: string } };
-        reservation: { day: string; time_slot: string; num_seats: number };
-        status: string;
-      }>;
-    }
+    const data = await this.request<unknown>('get', '/3/user/reservations', { type: 'upcoming' });
 
-    const data = await this.request<ReservationsResponse>('get', '/3/user/reservations');
-
-    return (data.reservations || []).map((res) => ({
+    return parseResyReservations(data).map((res) => ({
       reservationId: res.resy_token,
+      resy_token: res.resy_token,
+      reservation_id: res.reservation_id,
       venue: {
-        name: res.venue.name,
-        location: res.venue.location?.name || '',
+        name: res.venueName,
+        location: res.location,
       },
-      date: res.reservation.day,
-      time: res.reservation.time_slot,
-      partySize: res.reservation.num_seats,
+      date: res.date,
+      time: res.time,
+      partySize: res.partySize,
       status: res.status,
     }));
   }
 
-  async cancelReservation(resyToken: string): Promise<void> {
-    await this.request<void>('delete', '/3/book', { resy_token: resyToken });
+  async cancelReservation(idOrToken: string): Promise<void> {
+    let token = idOrToken.trim();
+    if (/^\d+$/.test(token)) {
+      const reservations = await this.getReservations();
+      const resolved = findResyToken(
+        reservations.map((reservation) => ({
+          resy_token: reservation.resy_token || reservation.reservationId,
+          reservation_id: reservation.reservation_id,
+          venueName: reservation.venue.name,
+          location: reservation.venue.location,
+          date: reservation.date,
+          time: reservation.time,
+          partySize: reservation.partySize,
+          status: reservation.status,
+        })),
+        token
+      );
+      if (!resolved) {
+        throw new Error(`No upcoming Resy reservation found for id ${idOrToken}. Cancel with the reservation's resy_token.`);
+      }
+      token = resolved;
+    }
+    await this.request<void>('post', '/3/cancel', { resy_token: token });
   }
 
   async verifyAuth(): Promise<boolean> {

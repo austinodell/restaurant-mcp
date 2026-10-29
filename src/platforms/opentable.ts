@@ -6,6 +6,7 @@
  */
 
 import { BasePlatformClient } from './base.js';
+import { openTableBlocked, parseOpenTableSearchHtml } from '../opentable/search-html.js';
 import type {
   PlatformName,
   Restaurant,
@@ -21,10 +22,36 @@ const BOOKING_BASE = 'https://www.opentable.com/booking/experiences-availability
 export class OpenTablePlatformClient extends BasePlatformClient {
   readonly name: PlatformName = 'opentable';
 
-  async search(_query: SearchQuery): Promise<Restaurant[]> {
-    // OpenTable public API is no longer available
-    console.error('OpenTable search unavailable: public API has been shut down. Use opentable.com directly.');
-    return [];
+  async search(query: SearchQuery): Promise<Restaurant[]> {
+    const term = [query.query, query.location].filter(Boolean).join(' ').trim();
+    const url = new URL('https://www.opentable.com/s');
+    url.searchParams.set('term', term);
+    const response = await fetch(url, {
+      headers: {
+        Accept: 'text/html',
+        'User-Agent': 'Mozilla/5.0 (compatible; restaurant-mcp/2.0)',
+      },
+    });
+    const html = await response.text();
+    if (openTableBlocked(response.status, html)) {
+      throw new Error('OpenTable blocked this request from Cloudflare (403 or bot challenge). Search is unavailable on this network.');
+    }
+    if (!response.ok) {
+      throw new Error(`OpenTable search returned HTTP ${response.status}.`);
+    }
+    const date = query.date || this.today();
+    const partySize = query.partySize || 2;
+    return parseOpenTableSearchHtml(html).map((hit) => ({
+      id: this.createId(hit.id),
+      platform: this.name,
+      platformId: hit.id,
+      name: hit.name,
+      location: hit.location,
+      cuisine: hit.cuisine,
+      priceRange: hit.priceRange,
+      rating: hit.rating,
+      bookingUrl: this.buildBookingUrl(hit.id, date, '19:00', partySize),
+    }));
   }
 
   async getDetails(_id: string | number): Promise<RestaurantDetails | null> {
@@ -57,8 +84,7 @@ export class OpenTablePlatformClient extends BasePlatformClient {
   }
 
   async isAvailable(): Promise<boolean> {
-    // OpenTable public API is no longer available
-    return false;
+    return true;
   }
 
   async isAuthenticated(): Promise<boolean> {

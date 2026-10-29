@@ -25,6 +25,7 @@ const PLATFORM_LIMITS: Record<PlatformName, { tokens: number; refillRate: number
   resy: { tokens: 20, refillRate: 20, interval: 60000 },
   opentable: { tokens: 30, refillRate: 30, interval: 60000 },
   tock: { tokens: 15, refillRate: 15, interval: 60000 },
+  sevenrooms: { tokens: 20, refillRate: 20, interval: 60000 },
 };
 
 export class RateLimiter {

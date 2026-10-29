@@ -46,7 +46,7 @@ export function matchRestaurants(restaurants: Restaurant[]): MatchResult {
 
   // Sort by platform priority (Resy > OpenTable > Tock for data quality)
   const sorted = [...restaurants].sort((a, b) => {
-    const priority: Record<PlatformName, number> = { resy: 0, opentable: 1, tock: 2 };
+    const priority: Record<PlatformName, number> = { resy: 0, opentable: 1, tock: 2, sevenrooms: 3 };
     return priority[a.platform] - priority[b.platform];
   });
 
@@ -163,6 +163,8 @@ function mergeRestaurants(primary: Restaurant, others: Restaurant[]): MatchedRes
       platformIds.opentable = typeof r.platformId === 'number' ? r.platformId : parseInt(String(r.platformId), 10);
     } else if (r.platform === 'tock') {
       platformIds.tock = String(r.platformId);
+    } else if (r.platform === 'sevenrooms') {
+      platformIds.sevenrooms = String(r.platformId);
     }
     platformResults.set(r.platform, r);
   }
@@ -183,7 +185,7 @@ function mergeRestaurants(primary: Restaurant, others: Restaurant[]): MatchedRes
   // Use best data for each field
   // Priority: Resy > OpenTable > Tock
   const best = all.reduce((acc, r) => {
-    const priority: Record<PlatformName, number> = { resy: 3, opentable: 2, tock: 1 };
+    const priority: Record<PlatformName, number> = { resy: 4, opentable: 3, tock: 2, sevenrooms: 1 };
     const accPriority = priority[acc.platform];
     const rPriority = priority[r.platform];
 

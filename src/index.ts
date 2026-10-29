@@ -121,7 +121,7 @@ function registerTools(server: McpServer) {
     return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
   });
 
-  server.tool('search_restaurant', 'Search for a restaurant by name and location.', toolArgs(searchRestaurantSchema), async (args: unknown) => {
+  server.tool('search_restaurant', 'Search Resy (geocoded, radius-limited), OpenTable, and SevenRooms by venue URL key. Tock has no public directory search because exploretock.com challenges datacenter clients; only venues saved with add_tock_venue are returned.', toolArgs(searchRestaurantSchema), async (args: unknown) => {
     const input = searchRestaurantSchema.parse(args);
     const result = await searchRestaurant(input.name, input.location, input.date, input.party_size);
     return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
@@ -143,7 +143,7 @@ function registerTools(server: McpServer) {
     return { content: [{ type: 'text' as const, text: JSON.stringify(output, null, 2) }] };
   });
 
-  server.tool('check_availability', 'Get available time slots for a restaurant on a given date.', toolArgs(checkAvailabilitySchema), async (args: unknown) => {
+  server.tool('check_availability', 'Get available time slots. Ids look like resy-123, opentable-67890, sevenrooms-rezdora, or tock-4 / tock-alinea.', toolArgs(checkAvailabilitySchema), async (args: unknown) => {
     const input = checkAvailabilitySchema.parse(args);
     const result = await checkAvailability(input.restaurant_id, input.date, input.party_size);
     return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
@@ -167,16 +167,19 @@ function registerTools(server: McpServer) {
 
   server.tool('list_reservations', 'View your upcoming reservations.', toolArgs(listReservationsSchema), async (args: unknown) => {
     const input = listReservationsSchema.parse(args);
-    const results: Array<{ platform: string; reservationId: string; restaurantName: string; location: string; date: string; time: string; partySize: number; status: string }> = [];
+    const results: Array<{ platform: string; reservationId: string; resy_token?: string; reservation_id?: string; restaurantName: string; location: string; date: string; time: string; partySize: number; status: string }> = [];
+    const errors: Record<string, string> = {};
     if (input.platform === 'resy' || input.platform === 'all') {
       try {
         const resyReservations = await resyClient.getReservations();
         for (const r of resyReservations) {
-          results.push({ platform: 'resy', reservationId: r.reservationId, restaurantName: r.venue.name, location: r.venue.location, date: r.date, time: r.time, partySize: r.partySize, status: r.status });
+          results.push({ platform: 'resy', reservationId: r.resy_token, resy_token: r.resy_token, reservation_id: r.reservation_id, restaurantName: r.venue.name, location: r.venue.location, date: r.date, time: r.time, partySize: r.partySize, status: r.status });
         }
-      } catch {}
+      } catch (error) {
+        errors.resy = error instanceof Error ? error.message : 'Failed to list Resy reservations';
+      }
     }
-    return { content: [{ type: 'text' as const, text: JSON.stringify(results, null, 2) }] };
+    return { content: [{ type: 'text' as const, text: JSON.stringify({ reservations: results, errors }, null, 2) }] };
   });
 
   server.tool('cancel_reservation', 'Cancel an existing reservation.', toolArgs(cancelReservationSchema), async (args: unknown) => {
@@ -265,6 +268,18 @@ function registerTools(server: McpServer) {
     const input = cancelSnipeSchema.parse(args);
     const result = await cancelSnipe(input);
     return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+  });
+
+  const addTockVenueSchema = z.object({
+    slug: z.string().min(1).describe('Tock URL slug, such as alinea'),
+    business_id: z.string().min(1).describe('Tock businessId used by the calendar API'),
+    name: z.string().optional().describe('Display name'),
+  });
+
+  server.tool('add_tock_venue', 'Save a Tock slug and businessId in KV so availability can be checked when exploretock.com challenges slug lookups. Does not book.', toolArgs(addTockVenueSchema), async (args: unknown) => {
+    const input = addTockVenueSchema.parse(args);
+    const saved = await tockClient.saveVenue(input.slug, input.business_id, input.name);
+    return { content: [{ type: 'text' as const, text: JSON.stringify({ id: `tock-${saved.slug}`, ...saved }, null, 2) }] };
   });
 
   server.tool('get_platform_status', 'Check health and rate limit status of all platforms.', {}, async () => {

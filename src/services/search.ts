@@ -21,12 +21,14 @@ import { PlatformClient, parseRestaurantId } from '../platforms/base.js';
 import { resyClient } from '../platforms/resy.js';
 import { openTableClient } from '../platforms/opentable.js';
 import { tockClient } from '../platforms/tock.js';
+import { sevenRoomsClient } from '../platforms/sevenrooms.js';
 
 // Platform clients registry
 const platformClients: Record<PlatformName, PlatformClient> = {
   resy: resyClient,
   opentable: openTableClient,
   tock: tockClient,
+  sevenrooms: sevenRoomsClient,
 };
 
 /**
@@ -56,6 +58,7 @@ export interface SearchResult {
     cuisine: string;
     priceRange: number;
     rating: number;
+    bookingUrl?: string;
   }>;
   platformErrors: Record<string, string>;
 }
@@ -110,6 +113,7 @@ export async function searchRestaurant(
     cuisine: r.cuisine,
     priceRange: r.priceRange,
     rating: r.rating,
+    bookingUrl: r.bookingUrl,
   }));
 
   return { restaurants, platformErrors };

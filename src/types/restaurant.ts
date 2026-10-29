@@ -3,12 +3,13 @@
  */
 
 // Platform identifiers
-export type PlatformName = 'resy' | 'opentable' | 'tock';
+export type PlatformName = 'resy' | 'opentable' | 'tock' | 'sevenrooms';
 
 export interface PlatformIds {
   resy?: number;
   opentable?: number;
   tock?: string;
+  sevenrooms?: string;
 }
 
 // Price range ($ to $$$$)
@@ -42,6 +43,7 @@ export interface BookingUrls {
   resy?: string;
   opentable?: string;
   tock?: string;
+  sevenrooms?: string;
 }
 
 // Search query parameters
@@ -71,6 +73,7 @@ export interface Restaurant {
   reviewCount?: number;
   imageUrl?: string;
   matchScore?: number;           // Fuzzy match score (0-1)
+  bookingUrl?: string;
 }
 
 // Full restaurant details

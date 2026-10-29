@@ -71,6 +71,8 @@ export interface ResyBookingDetails {
 
 export interface ResyReservation {
   reservationId: string;
+  resy_token?: string;
+  reservation_id?: string;
   venue: {
     name: string;
     location: string;

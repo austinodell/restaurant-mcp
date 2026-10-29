@@ -19,6 +19,8 @@ import type {
 import { cache, CacheKeys, CacheTTL } from '../services/cache.js';
 import { rateLimiter } from '../services/rate-limiter.js';
 import { parseResySearchBody, type ParsedResyVenue } from '../resy/search-results.js';
+import { geocodeLocation, searchRadiusMeters } from '../resy/geocode.js';
+import { findResyToken, parseResyReservations } from '../resy/reservations.js';
 
 const BASE_URL = 'https://api.resy.com';
 
@@ -53,6 +55,33 @@ interface ResyLoginResponse {
   first_name: string;
   last_name: string;
   email: string;
+}
+
+function isGenericQuery(query: string): boolean {
+  return /^(restaurants?|food|dinner|lunch|bar|bars)$/i.test(query.trim());
+}
+
+function filterHitsByRadius(data: unknown, coords: { lat: number; lng: number }, radiusMeters: number): unknown {
+  if (!data || typeof data !== 'object') return data;
+  const body = data as { search?: { hits?: unknown[] } };
+  const hits = body.search?.hits;
+  if (!Array.isArray(hits)) return data;
+  const kept = hits.filter((hit) => {
+    if (!hit || typeof hit !== 'object') return false;
+    const geo = (hit as { _geoloc?: { lat?: number; lng?: number } })._geoloc;
+    if (typeof geo?.lat !== 'number' || typeof geo?.lng !== 'number') return true;
+    return haversineMeters(coords.lat, coords.lng, geo.lat, geo.lng) <= radiusMeters * 1.15;
+  });
+  return { ...body, search: { ...body.search, hits: kept } };
+}
+
+function haversineMeters(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const rad = Math.PI / 180;
+  const dLat = (lat2 - lat1) * rad;
+  const dLng = (lng2 - lng1) * rad;
+  const a = Math.sin(dLat / 2) ** 2
+    + Math.cos(lat1 * rad) * Math.cos(lat2 * rad) * Math.sin(dLng / 2) ** 2;
+  return 6371000 * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
 export class ResyPlatformClient extends BasePlatformClient {
@@ -166,40 +195,50 @@ export class ResyPlatformClient extends BasePlatformClient {
   }
 
   async search(query: SearchQuery): Promise<Restaurant[]> {
-    const coords = this.getCityCoordinates(query.location);
+    const fallback = this.getCityCoordinates(query.location);
+    const geocoded = await geocodeLocation(query.location).catch(() => null);
+    const coords = geocoded ?? { lat: fallback.lat, lng: fallback.lng };
+    const radius = searchRadiusMeters(query.location);
 
-    console.error(`Resy search: "${query.query}" in "${query.location}"`);
+    console.error(`Resy search: "${query.query}" in "${query.location}" @ ${coords.lat},${coords.lng} r=${radius}m`);
 
     try {
       await this.ensureCredentials();
-      // /4/find answers with results.venues but does not filter by name (the NYC
-      // catalog is ~170MB). Name search lives on /3/venuesearch/search (search.hits).
-      // parseResySearchBody accepts either shape.
-      const response = await this.client.post(
-        '/3/venuesearch/search',
-        {
-          query: query.query,
-          geo: { latitude: coords.lat, longitude: coords.lng },
-          per_page: 20,
-          types: ['venue'],
-        },
-        {
-          headers: {
-            ...this.getHeaders(),
-            'Content-Type': 'application/json',
-            Accept: 'application/json',
-          },
-          timeout: 30000,
-        }
-      );
-
-      const hits = parseResySearchBody(response.data, query.query);
+      // geo.radius is meters. Values under 1 are ignored; a missing radius does not
+      // keep results in the requested city.
+      const body = await this.venueSearch(query.query, coords, radius);
+      const hits = parseResySearchBody(filterHitsByRadius(body, coords, radius), query.query);
+      if (hits.length === 0 && isGenericQuery(query.query)) {
+        const nearby = await this.venueSearch('', coords, radius);
+        return parseResySearchBody(filterHitsByRadius(nearby, coords, radius)).map((hit) => this.mapToRestaurant(hit));
+      }
       console.error(`Resy search found ${hits.length} results`);
       return hits.map((hit) => this.mapToRestaurant(hit));
     } catch (error) {
       console.error('Resy search error:', error instanceof Error ? error.message : error);
       return [];
     }
+  }
+
+  private async venueSearch(text: string, coords: { lat: number; lng: number }, radius: number): Promise<unknown> {
+    const response = await this.client.post(
+      '/3/venuesearch/search',
+      {
+        query: text,
+        geo: { latitude: coords.lat, longitude: coords.lng, radius },
+        per_page: 20,
+        types: ['venue'],
+      },
+      {
+        headers: {
+          ...this.getHeaders(),
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        timeout: 30000,
+      }
+    );
+    return response.data;
   }
 
   private getLocationSlug(location: string): string {
@@ -467,39 +506,50 @@ export class ResyPlatformClient extends BasePlatformClient {
   // Get user's reservations
   async getReservations(): Promise<Array<{
     reservationId: string;
+    resy_token: string;
+    reservation_id?: string;
     venue: { name: string; location: string };
     date: string;
     time: string;
     partySize: number;
     status: string;
   }>> {
-    interface ReservationsResponse {
-      reservations: Array<{
-        resy_token: string;
-        venue: { name: string; location: { name: string } };
-        reservation: { day: string; time_slot: string; num_seats: number };
-        status: string;
-      }>;
-    }
-
-    const data = await this.request<ReservationsResponse>('get', '/3/user/reservations');
-
-    return (data.reservations || []).map((res) => ({
+    const data = await this.request<unknown>('get', '/3/user/reservations', { type: 'upcoming' });
+    return parseResyReservations(data).map((res) => ({
       reservationId: res.resy_token,
-      venue: {
-        name: res.venue.name,
-        location: res.venue.location?.name || '',
-      },
-      date: res.reservation.day,
-      time: res.reservation.time_slot,
-      partySize: res.reservation.num_seats,
+      resy_token: res.resy_token,
+      reservation_id: res.reservation_id,
+      venue: { name: res.venueName, location: res.location },
+      date: res.date,
+      time: res.time,
+      partySize: res.partySize,
       status: res.status,
     }));
   }
 
-  // Cancel a reservation
-  async cancelReservation(resyToken: string): Promise<void> {
-    await this.request<void>('delete', '/3/book', { resy_token: resyToken });
+  // Cancel a reservation. Numeric ids are looked up; Resy cancels with resy_token.
+  async cancelReservation(idOrToken: string): Promise<void> {
+    const token = await this.resolveResyToken(idOrToken);
+    await this.request<void>('post', '/3/cancel', { resy_token: token });
+  }
+
+  private async resolveResyToken(idOrToken: string): Promise<string> {
+    if (!/^\d+$/.test(idOrToken.trim())) return idOrToken.trim();
+    const reservations = await this.getReservations();
+    const token = findResyToken(reservations.map((reservation) => ({
+      resy_token: reservation.resy_token,
+      reservation_id: reservation.reservation_id,
+      venueName: reservation.venue.name,
+      location: reservation.venue.location,
+      date: reservation.date,
+      time: reservation.time,
+      partySize: reservation.partySize,
+      status: reservation.status,
+    })), idOrToken.trim());
+    if (!token) {
+      throw new Error(`No upcoming Resy reservation found for id ${idOrToken}. Cancel with the reservation's resy_token.`);
+    }
+    return token;
   }
 
   // Helper methods
