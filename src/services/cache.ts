@@ -31,7 +31,7 @@ export class CacheService {
 
   constructor() {
     // Cleanup expired entries every minute
-    this.cleanupInterval = setInterval(() => this.cleanup(), 60000);
+    // Workers: no global timers; cleanup happens lazily on get()
   }
 
   /**

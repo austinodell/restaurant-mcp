@@ -2,9 +2,9 @@ import { resyClient } from '../resy/client.js';
 import { openTableClient } from '../opentable/client.js';
 import { updateSnipeStatus, type SnipeConfig } from './store.js';
 
-const POLL_INTERVAL_MS = 500;
-const PRE_RELEASE_START_MS = 30000; // Start polling 30 seconds before release
-const MAX_POLL_DURATION_MS = 120000; // Give up after 2 minutes
+const POLL_INTERVAL_MS = 1000;
+export const PRE_RELEASE_START_MS = 30000; // Start polling 30 seconds before release
+const MAX_POLL_DURATION_MS = 150000; // Give up after 2 minutes
 
 function parseTime(timeStr: string): { hours: number; minutes: number } {
   // Handle formats like "7:00 PM", "19:00", "7:30PM"
@@ -119,6 +119,8 @@ async function executeOpenTableSnipe(config: SnipeConfig): Promise<string> {
 
 export async function executeSnipe(config: SnipeConfig): Promise<void> {
   await updateSnipeStatus(config.id, 'running');
+  const wait = new Date(config.releaseTime).getTime() - PRE_RELEASE_START_MS - Date.now();
+  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
 
   try {
     let result: string;
@@ -136,12 +138,3 @@ export async function executeSnipe(config: SnipeConfig): Promise<void> {
   }
 }
 
-export function scheduleSnipe(config: SnipeConfig): NodeJS.Timeout {
-  const releaseTime = new Date(config.releaseTime).getTime();
-  const startTime = releaseTime - PRE_RELEASE_START_MS;
-  const delay = Math.max(0, startTime - Date.now());
-
-  return setTimeout(() => {
-    executeSnipe(config);
-  }, delay);
-}

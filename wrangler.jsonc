@@ -1,0 +1,12 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "restaurant-mcp",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "minify": true,
+  "kv_namespaces": [{ "binding": "CREDS", "id": "7d05dafe369446c29cdd0cd61bf6b60e" }],
+  "triggers": { "crons": ["* * * * *"] }
+  // Secret (set via dashboard or `wrangler secret put MCP_TOKEN`): MCP_TOKEN
+}

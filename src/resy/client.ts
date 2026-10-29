@@ -18,6 +18,7 @@ export class ResyClient {
 
   constructor() {
     this.client = axios.create({
+      adapter: 'fetch',
       baseURL: BASE_URL,
       timeout: 30000,
     });

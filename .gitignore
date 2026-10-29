@@ -1,4 +1,5 @@
-node_modules/
-*.log
-.env
-credentials.enc
+node_modules
+dist
+.wrangler
+MCP_TOKEN.txt
+.deploy.js

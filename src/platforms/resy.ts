@@ -82,6 +82,7 @@ export class ResyPlatformClient extends BasePlatformClient {
   constructor() {
     super();
     this.client = axios.create({
+      adapter: 'fetch',
       baseURL: BASE_URL,
       timeout: 15000, // 15 second timeout
     });
@@ -199,7 +200,7 @@ export class ResyPlatformClient extends BasePlatformClient {
           party_size: partySize,
           query: query.query,
         },
-        timeout: 10000,
+        timeout: 30000,
       });
 
       const hits = findData.data?.search?.hits || [];
@@ -430,8 +431,8 @@ export class ResyPlatformClient extends BasePlatformClient {
       // Health check using /4/find which is the working search endpoint
       const response = await this.client.get('/4/find', {
         headers: this.getHeaders(),
-        params: { lat: 40.7128, long: -73.9352, day: this.today(), party_size: 2 },
-        timeout: 10000,
+        params: { lat: 40.7128, long: -73.9352, day: this.today(), party_size: 2, query: 'carbone', limit: 1 },
+        timeout: 30000,
       });
       const available = response.status === 200;
       cache.set(cacheKey, available, CacheTTL.PLATFORM_HEALTH);

@@ -1,6 +1,5 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import express from 'express';
+import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { z } from 'zod';
 
 import {
@@ -36,7 +35,8 @@ import {
   cancelSnipe,
   cancelSnipeSchema,
 } from './tools/snipe.js';
-import { startScheduler, stopScheduler } from './sniper/scheduler.js';
+import { runDueSnipes } from './sniper/scheduler.js';
+import { setEnv, type Env } from './env.js';
 
 // Schemas for tool inputs
 const findTableSchema = z.object({
@@ -250,6 +250,7 @@ function registerTools(server: McpServer) {
   server.tool('snipe_reservation', 'Schedule an automatic booking attempt.', snipeReservationSchema.shape, async (args) => {
     const input = snipeReservationSchema.parse(args);
     const result = await snipeReservation(input);
+    (result as any).note = 'Checked by a once-per-minute cron; polls ~30s before release for up to 2.5 min.';
     return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
   });
 
@@ -274,100 +275,27 @@ function registerTools(server: McpServer) {
   });
 }
 
-// Create single MCP server instance (stateless, matches working schwab pattern)
-const mcpServer = new McpServer({ name: 'restaurant-reservations', version: '2.0.0' });
-registerTools(mcpServer);
 
-// Stateless HTTP transport — single shared instance (Poke-compatible)
-const httpTransport = new StreamableHTTPServerTransport({
-  sessionIdGenerator: undefined, // Stateless mode
-});
-
-// Connect once at startup
-(async () => {
-  await mcpServer.connect(httpTransport);
-  console.log('[MCP] HTTP transport connected');
-})();
-
-// Start server
-const PORT = parseInt(process.env.PORT || '3000', 10);
-const MCP_API_KEY = process.env.MCP_API_KEY || '';
-
-const app = express();
-
-// CORS middleware for Poke
-app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Accept, Authorization');
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
-  }
-  next();
-});
-
-app.use(express.json({ limit: '1mb' }));
-
-// Health check
-app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', service: 'restaurant-mcp', version: '2.0.0' });
-});
-
-// API key auth
-function requireApiKey(req: express.Request, res: express.Response, next: express.NextFunction) {
-  if (!MCP_API_KEY) return next();
-  const authHeader = req.headers.authorization || '';
-  const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : '';
-  if (token !== MCP_API_KEY) {
-    return res.status(401).json({ error: 'Unauthorized - invalid or missing API key' });
-  }
-  next();
-}
-
-// Handle all MCP requests via POST /mcp
-app.post('/mcp', requireApiKey, async (req, res) => {
-  try {
-    await httpTransport.handleRequest(req, res, req.body);
-  } catch (err) {
-    if (!res.headersSent) {
-      res.status(500).json({ error: 'MCP request failed' });
-    }
-  }
-});
-
-// Handle GET /mcp for SSE streaming
-app.get('/mcp', requireApiKey, async (req, res) => {
-  try {
-    await httpTransport.handleRequest(req, res);
-  } catch (err) {
-    if (!res.headersSent) {
-      res.status(500).json({ error: 'MCP request failed' });
-    }
-  }
-});
-
-async function main() {
-  await startScheduler();
-
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Restaurant MCP server running on port ${PORT}`);
-    console.log(`MCP: http://localhost:${PORT}/mcp`);
-  });
-
-  process.on('SIGINT', () => {
-    cache.destroy();
-    stopScheduler();
-    process.exit(0);
-  });
-
-  process.on('SIGTERM', () => {
-    cache.destroy();
-    stopScheduler();
-    process.exit(0);
-  });
-}
-
-main().catch((error) => {
-  console.error('Failed to start server:', error);
-  process.exit(1);
-});
+function timingSafeEqual(a: string, b: string) { if (a.length !== b.length) return false; let r = 0; for (let i = 0; i < a.length; i++) r |= a.charCodeAt(i) ^ b.charCodeAt(i); return r === 0; }
+const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, Accept, Authorization, Mcp-Session-Id, Mcp-Protocol-Version' };
+export default {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    setEnv(env);
+    const url = new URL(request.url);
+    if (request.method === 'OPTIONS') return new Response(null, { headers: cors });
+    if (url.pathname === '/health') return Response.json({ status: 'ok', service: 'restaurant-mcp', version: '2.0.0-workers' });
+    if (url.pathname !== '/mcp') return new Response('Not found', { status: 404 });
+    const auth = request.headers.get('authorization') || '';
+    const tok = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+    if (!env.MCP_TOKEN || !timingSafeEqual(tok, env.MCP_TOKEN)) return Response.json({ error: 'Unauthorized' }, { status: 401, headers: cors });
+    if (request.method !== 'POST') return Response.json({ jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed' }, id: null }, { status: 405, headers: cors });
+    const server = new McpServer({ name: 'restaurant-reservations', version: '2.0.0' });
+    registerTools(server);
+    const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+    await server.connect(transport);
+    const res = await transport.handleRequest(request);
+    const h = new Headers(res.headers); for (const [k, v] of Object.entries(cors)) h.set(k, v);
+    return new Response(res.body, { status: res.status, headers: h });
+  },
+  async scheduled(_e: ScheduledController, env: Env, ctx: ExecutionContext) { setEnv(env); ctx.waitUntil(runDueSnipes()); },
+};
