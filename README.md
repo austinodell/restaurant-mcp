@@ -1,6 +1,45 @@
 # Restaurant Reservation MCP Server
 
-A local MCP server for searching and booking restaurant reservations through Resy and OpenTable.
+A remote MCP server for searching and booking restaurant reservations through Resy and OpenTable. It runs as a Cloudflare Worker. Clients call `POST /mcp` with `Authorization: Bearer <MCP_TOKEN>`.
+
+## Deploying on Cloudflare
+
+### Workers Builds
+
+Connect this repo in Cloudflare Workers Builds with:
+
+- Root directory: `/`
+- Build command: `npm install`
+- Deploy command: `npx wrangler deploy`
+
+`wrangler.jsonc` binds the `CREDS` KV namespace used for Resy/OpenTable credentials and snipe jobs. Do not commit secrets.
+
+Set the Worker secret `MCP_TOKEN` in the dashboard, or locally with:
+
+```bash
+npx wrangler secret put MCP_TOKEN
+```
+
+That value is the bearer token clients send. The deploy workflow does not set it.
+
+Resy login comes from Worker secrets, not KV. The worker reads `RESY_EMAIL` and `RESY_PASSWORD` (and optional `RESY_AUTH_TOKEN`) from the environment and prefers them over anything in KV. Email and password are never written to KV. A short-lived auth token from login or refresh may be cached in KV; if `RESY_AUTH_TOKEN` is set, that secret is used instead.
+
+```bash
+npx wrangler secret put RESY_EMAIL
+npx wrangler secret put RESY_PASSWORD
+npx wrangler secret put RESY_AUTH_TOKEN   # optional
+```
+
+`set_login` does not store a password. It tells you to set those secrets. `check_auth_status` reports whether `RESY_EMAIL`, `RESY_PASSWORD`, and `RESY_AUTH_TOKEN` are present.
+
+### GitHub Actions
+
+`.github/workflows/deploy.yml` deploys on every push to `master` and when run manually (`workflow_dispatch`). Add these repository secrets (Settings → Secrets and variables → Actions):
+
+- `CLOUDFLARE_API_TOKEN` — API token with permission to deploy Workers
+- `CLOUDFLARE_ACCOUNT_ID` — Cloudflare account ID
+
+`MCP_TOKEN` stays a Worker secret. It is not a GitHub Actions secret.
 
 ## Features
 
@@ -8,7 +47,7 @@ A local MCP server for searching and booking restaurant reservations through Res
 - **Real-time Availability**: Check available time slots for any date
 - **Direct Booking**: Book Resy reservations directly; get booking links for OpenTable
 - **Reservation Sniper**: Auto-book the instant slots become available
-- **Secure Credentials**: All credentials stored in Windows Credential Manager (encrypted with DPAPI)
+- **Secure Credentials**: API keys and snipe jobs live in the `CREDS` KV namespace. Resy email and password are Worker secrets (`RESY_EMAIL`, `RESY_PASSWORD`)
 
 ## Installation
 
@@ -40,11 +79,12 @@ Add to `~/.claude/settings.json`:
 First, you need your Resy API key and auth token. You can find these in your browser's developer tools while logged into resy.com:
 
 ```
-# In Claude, use these tools:
-set_credentials(platform: "resy", api_key: "YOUR_API_KEY", auth_token: "YOUR_TOKEN")
+# API key can be stored in KV:
+set_credentials(platform: "resy", api_key: "YOUR_API_KEY")
 
-# Or for automatic token refresh, use:
-set_login(platform: "resy", email: "your@email.com", password: "your-password")
+# Email and password are Worker secrets, not tool arguments:
+# npx wrangler secret put RESY_EMAIL
+# npx wrangler secret put RESY_PASSWORD
 ```
 
 ### 2. Search for Restaurants
@@ -104,8 +144,8 @@ The sniper will:
 | `list_reservations` | View your upcoming reservations |
 | `cancel_reservation` | Cancel a booking |
 | `set_credentials` | Store API key/token securely |
-| `set_login` | Store email/password for auto-refresh |
-| `check_auth_status` | Verify credentials are valid |
+| `set_login` | Refuses to store a password; tells you to set `RESY_EMAIL` / `RESY_PASSWORD` |
+| `check_auth_status` | Verify credentials and whether Resy Worker secrets are set |
 | `refresh_token` | Manually refresh auth token |
 | `snipe_reservation` | Schedule auto-booking when slots open |
 | `list_snipes` | View scheduled snipes |
@@ -114,9 +154,10 @@ The sniper will:
 ## Security
 
 - **No credit card data**: This MCP never handles payment info. Bookings use payment methods saved in your Resy/OpenTable accounts.
-- **Windows Credential Manager**: All credentials encrypted with DPAPI (same security as Chrome/Edge passwords)
-- **No files**: Credentials never written to disk files
-- **HTTPS only**: All API calls use TLS 1.3
+- **KV credentials**: API keys and cached Resy auth tokens live in the `CREDS` KV namespace. Resy email and password do not
+- **Resy login secrets**: `RESY_EMAIL` and `RESY_PASSWORD` (optional `RESY_AUTH_TOKEN`) are Worker secrets and override KV
+- **Bearer auth**: `/mcp` requires `Authorization: Bearer <MCP_TOKEN>`
+- **HTTPS only**: All API calls use TLS
 - **Rate limited**: Max 10 requests/minute per platform
 
 ## Platform Notes
@@ -137,7 +178,7 @@ The sniper will:
 Run `set_credentials` with your API key first.
 
 ### "Resy authentication failed"
-Your token expired. Run `set_login` to enable auto-refresh, or manually get a new token.
+The auth token expired and login could not refresh it. Set `RESY_EMAIL` and `RESY_PASSWORD` with `wrangler secret put`. `check_auth_status` shows whether those secrets are present.
 
 ### OpenTable booking returns URL
 This is expected. OpenTable doesn't allow third-party booking - click the URL to complete on their site.

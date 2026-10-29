@@ -5,6 +5,7 @@ import { z } from 'zod';
 import {
   setCredential,
   getCredential,
+  deleteCredential,
   getResyAuthStatus,
   getOpenTableAuthStatus,
 } from './credentials.js';
@@ -98,8 +99,6 @@ const setCredentialsSchema = z.object({
 
 const setLoginSchema = z.object({
   platform: z.enum(['resy']).describe('Platform (currently only Resy supported)'),
-  email: z.string().email().describe('Account email'),
-  password: z.string().min(1).describe('Account password'),
 });
 
 const checkAuthStatusSchema = z.object({
@@ -110,20 +109,25 @@ const refreshTokenSchema = z.object({
   platform: z.enum(['resy']).describe('Platform to refresh token for'),
 });
 
+// McpServer.tool infers a Zod generic that exhausts tsc. Handlers validate with schema.parse.
+function toolArgs(schema: { shape: unknown }) {
+  return schema.shape as any;
+}
+
 function registerTools(server: McpServer) {
-  server.tool('find_table', 'Find and book a table at a restaurant.', findTableSchema.shape, async (args) => {
+  server.tool('find_table', 'Find and book a table at a restaurant.', toolArgs(findTableSchema), async (args: unknown) => {
     const input = findTableSchema.parse(args);
     const result = await findTable(input.restaurant, input.location, input.date, input.time, input.party_size, input.book);
     return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
   });
 
-  server.tool('search_restaurant', 'Search for a restaurant by name and location.', searchRestaurantSchema.shape, async (args) => {
+  server.tool('search_restaurant', 'Search for a restaurant by name and location.', toolArgs(searchRestaurantSchema), async (args: unknown) => {
     const input = searchRestaurantSchema.parse(args);
     const result = await searchRestaurant(input.name, input.location, input.date, input.party_size);
     return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
   });
 
-  server.tool('get_restaurant', 'Look up a restaurant by its platform-specific ID.', getRestaurantSchema.shape, async (args) => {
+  server.tool('get_restaurant', 'Look up a restaurant by its platform-specific ID.', toolArgs(getRestaurantSchema), async (args: unknown) => {
     const input = getRestaurantSchema.parse(args);
     const result = await getRestaurantById(input.restaurant_id);
     if (result.error || !result.restaurant) {
@@ -132,20 +136,20 @@ function registerTools(server: McpServer) {
     return { content: [{ type: 'text' as const, text: JSON.stringify(result.restaurant, null, 2) }] };
   });
 
-  server.tool('get_restaurants', 'Look up multiple restaurants by their IDs.', getRestaurantsSchema.shape, async (args) => {
+  server.tool('get_restaurants', 'Look up multiple restaurants by their IDs.', toolArgs(getRestaurantsSchema), async (args: unknown) => {
     const input = getRestaurantsSchema.parse(args);
     const results = await getRestaurantsByIds(input.restaurant_ids);
     const output = results.map((r) => ({ id: r.restaurant?.id, name: r.restaurant?.name, platform: r.platform, found: r.restaurant !== null, error: r.error, details: r.restaurant }));
     return { content: [{ type: 'text' as const, text: JSON.stringify(output, null, 2) }] };
   });
 
-  server.tool('check_availability', 'Get available time slots for a restaurant on a given date.', checkAvailabilitySchema.shape, async (args) => {
+  server.tool('check_availability', 'Get available time slots for a restaurant on a given date.', toolArgs(checkAvailabilitySchema), async (args: unknown) => {
     const input = checkAvailabilitySchema.parse(args);
     const result = await checkAvailability(input.restaurant_id, input.date, input.party_size);
     return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
   });
 
-  server.tool('make_reservation', 'Book a reservation.', makeReservationSchema.shape, async (args) => {
+  server.tool('make_reservation', 'Book a reservation.', toolArgs(makeReservationSchema), async (args: unknown) => {
     const input = makeReservationSchema.parse(args);
     const parsed = parseRestaurantId(input.restaurant_id);
     if (!parsed) return { content: [{ type: 'text' as const, text: `Invalid restaurant ID: ${input.restaurant_id}` }] };
@@ -155,13 +159,13 @@ function registerTools(server: McpServer) {
     return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
   });
 
-  server.tool('get_booking_options', 'Get all ways to book a restaurant.', getBookingOptionsSchema.shape, async (args) => {
+  server.tool('get_booking_options', 'Get all ways to book a restaurant.', toolArgs(getBookingOptionsSchema), async (args: unknown) => {
     const input = getBookingOptionsSchema.parse(args);
     const options = await getBookingOptions(input.restaurant_id);
     return { content: [{ type: 'text' as const, text: JSON.stringify(options, null, 2) }] };
   });
 
-  server.tool('list_reservations', 'View your upcoming reservations.', listReservationsSchema.shape, async (args) => {
+  server.tool('list_reservations', 'View your upcoming reservations.', toolArgs(listReservationsSchema), async (args: unknown) => {
     const input = listReservationsSchema.parse(args);
     const results: Array<{ platform: string; reservationId: string; restaurantName: string; location: string; date: string; time: string; partySize: number; status: string }> = [];
     if (input.platform === 'resy' || input.platform === 'all') {
@@ -175,7 +179,7 @@ function registerTools(server: McpServer) {
     return { content: [{ type: 'text' as const, text: JSON.stringify(results, null, 2) }] };
   });
 
-  server.tool('cancel_reservation', 'Cancel an existing reservation.', cancelReservationSchema.shape, async (args) => {
+  server.tool('cancel_reservation', 'Cancel an existing reservation.', toolArgs(cancelReservationSchema), async (args: unknown) => {
     const input = cancelReservationSchema.parse(args);
     if (input.platform === 'resy') {
       try {
@@ -188,7 +192,7 @@ function registerTools(server: McpServer) {
     return { content: [{ type: 'text' as const, text: JSON.stringify({ success: false, message: `${input.platform} reservations must be cancelled on their website` }, null, 2) }] };
   });
 
-  server.tool('set_credentials', 'Securely store API credentials.', setCredentialsSchema.shape, async (args) => {
+  server.tool('set_credentials', 'Securely store API credentials.', toolArgs(setCredentialsSchema), async (args: unknown) => {
     const input = setCredentialsSchema.parse(args);
     const stored: string[] = [];
     if (input.platform === 'resy') {
@@ -200,20 +204,17 @@ function registerTools(server: McpServer) {
     return { content: [{ type: 'text' as const, text: stored.length > 0 ? `Stored ${stored.join(' and ')} for ${input.platform}.` : 'No credentials provided to store.' }] };
   });
 
-  server.tool('set_login', 'Store email/password for automatic token refresh.', setLoginSchema.shape, async (args) => {
+  server.tool('set_login', 'Resy login is a Worker secret, not KV. Explains how to set RESY_EMAIL and RESY_PASSWORD.', toolArgs(setLoginSchema), async (args: unknown) => {
     const input = setLoginSchema.parse(args);
-    if (input.platform === 'resy') {
-      try {
-        await resyClient.login(input.email, input.password);
-        return { content: [{ type: 'text' as const, text: 'Login successful! Token will auto-refresh when needed.' }] };
-      } catch (error) {
-        return { content: [{ type: 'text' as const, text: `Login failed: ${error instanceof Error ? error.message : 'Invalid credentials'}` }] };
-      }
+    if (input.platform !== 'resy') {
+      return { content: [{ type: 'text' as const, text: 'Only Resy login is currently supported.' }] };
     }
-    return { content: [{ type: 'text' as const, text: 'Only Resy login is currently supported.' }] };
+    await deleteCredential('resy-email');
+    await deleteCredential('resy-password');
+    return { content: [{ type: 'text' as const, text: 'Resy email and password are not stored in KV. Set them with `wrangler secret put RESY_EMAIL` and `wrangler secret put RESY_PASSWORD`. Optional auth token: `wrangler secret put RESY_AUTH_TOKEN`.' }] };
   });
 
-  server.tool('check_auth_status', 'Check if credentials are configured and valid.', checkAuthStatusSchema.shape, async (args) => {
+  server.tool('check_auth_status', 'Check if credentials are configured and valid.', toolArgs(checkAuthStatusSchema), async (args: unknown) => {
     const input = checkAuthStatusSchema.parse(args);
     const statuses: Record<string, unknown>[] = [];
     if (input.platform === 'resy' || input.platform === 'all') {
@@ -231,12 +232,12 @@ function registerTools(server: McpServer) {
     return { content: [{ type: 'text' as const, text: JSON.stringify(statuses, null, 2) }] };
   });
 
-  server.tool('refresh_token', 'Manually refresh authentication token.', refreshTokenSchema.shape, async (args) => {
+  server.tool('refresh_token', 'Manually refresh authentication token.', toolArgs(refreshTokenSchema), async (args: unknown) => {
     const input = refreshTokenSchema.parse(args);
     if (input.platform === 'resy') {
       const email = await getCredential('resy-email');
       const password = await getCredential('resy-password');
-      if (!email || !password) return { content: [{ type: 'text' as const, text: 'No login credentials stored. Use set_login first.' }] };
+      if (!email || !password) return { content: [{ type: 'text' as const, text: 'RESY_EMAIL and RESY_PASSWORD are not set. Add them with `wrangler secret put RESY_EMAIL` and `wrangler secret put RESY_PASSWORD`.' }] };
       try {
         await resyClient.login(email, password);
         return { content: [{ type: 'text' as const, text: 'Token refreshed successfully!' }] };
@@ -247,20 +248,20 @@ function registerTools(server: McpServer) {
     return { content: [{ type: 'text' as const, text: 'Only Resy token refresh is supported.' }] };
   });
 
-  server.tool('snipe_reservation', 'Schedule an automatic booking attempt.', snipeReservationSchema.shape, async (args) => {
+  server.tool('snipe_reservation', 'Schedule an automatic booking attempt.', toolArgs(snipeReservationSchema), async (args: unknown) => {
     const input = snipeReservationSchema.parse(args);
     const result = await snipeReservation(input);
     (result as any).note = 'Checked by a once-per-minute cron; polls ~30s before release for up to 2.5 min.';
     return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
   });
 
-  server.tool('list_snipes', 'View all scheduled snipe attempts.', listSnipesSchema.shape, async (args) => {
+  server.tool('list_snipes', 'View all scheduled snipe attempts.', toolArgs(listSnipesSchema), async (args: unknown) => {
     const input = listSnipesSchema.parse(args);
     const results = await listScheduledSnipes(input);
     return { content: [{ type: 'text' as const, text: JSON.stringify(results, null, 2) }] };
   });
 
-  server.tool('cancel_snipe', 'Cancel a scheduled snipe attempt.', cancelSnipeSchema.shape, async (args) => {
+  server.tool('cancel_snipe', 'Cancel a scheduled snipe attempt.', toolArgs(cancelSnipeSchema), async (args: unknown) => {
     const input = cancelSnipeSchema.parse(args);
     const result = await cancelSnipe(input);
     return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };

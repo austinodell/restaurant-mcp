@@ -8,6 +8,7 @@ import type {
   ResyBookResponse,
   ResyBookDetailsResponse,
 } from './types.js';
+import { parseResySearchBody } from './search-results.js';
 
 const BASE_URL = 'https://api.resy.com';
 
@@ -102,7 +103,7 @@ export class ResyClient {
         if (refreshed) {
           return this.request<T>(method, url, data, false);
         }
-        throw new Error('Resy authentication failed. Please update credentials using set_login tool.');
+        throw new Error('Resy authentication failed. Set Worker secrets with `wrangler secret put RESY_EMAIL` and `wrangler secret put RESY_PASSWORD`.');
       }
       throw error;
     }
@@ -118,9 +119,8 @@ export class ResyClient {
     );
 
     this.authToken = response.data.token;
+    // Cache the short-lived token only. Email and password stay in Worker secrets.
     await setCredential('resy-auth-token', this.authToken);
-    await setCredential('resy-email', email);
-    await setCredential('resy-password', password);
 
     return response.data;
   }
@@ -131,37 +131,33 @@ export class ResyClient {
     date: string,
     partySize: number
   ): Promise<ResySearchResult[]> {
-    interface FindResponse {
-      search: {
-        hits: Array<{
-          id: { resy: number };
-          name: string;
-          location: { name: string; neighborhood: string };
-          cuisine: string[];
-          price_range: number;
-          rating: number;
-          images: string[];
-        }>;
-      };
-    }
+    await this.ensureCredentials();
+    const text = `${query} ${location}`.trim();
+    const response = await this.client.post(
+      '/3/venuesearch/search',
+      {
+        query: text,
+        per_page: 20,
+        types: ['venue'],
+      },
+      {
+        headers: {
+          ...this.getHeaders(),
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+      }
+    );
 
-    const data = await this.request<FindResponse>('get', '/4/find', {
-      lat: 0,
-      long: 0,
-      day: date,
-      party_size: partySize,
-      query: `${query} ${location}`.trim(),
-    });
-
-    return (data.search?.hits || []).map((hit) => ({
-      id: hit.id.resy,
+    return parseResySearchBody(response.data, text).map((hit) => ({
+      id: hit.id,
       name: hit.name,
-      location: hit.location?.name || '',
-      neighborhood: hit.location?.neighborhood || '',
-      cuisine: Array.isArray(hit.cuisine) ? hit.cuisine.join(', ') : hit.cuisine || '',
-      priceRange: hit.price_range || 0,
-      rating: hit.rating || 0,
-      imageUrl: hit.images?.[0],
+      location: hit.location,
+      neighborhood: hit.neighborhood,
+      cuisine: hit.cuisines.join(', '),
+      priceRange: hit.priceRange,
+      rating: hit.rating,
+      imageUrl: hit.imageUrl,
     }));
   }
 

@@ -27,7 +27,7 @@ export class CacheService {
   private cache = new Map<string, CacheEntry<unknown>>();
   private hits = 0;
   private misses = 0;
-  private cleanupInterval: NodeJS.Timeout | null = null;
+  private cleanupInterval: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
     // Cleanup expired entries every minute

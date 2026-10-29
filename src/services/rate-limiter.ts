@@ -31,7 +31,7 @@ export class RateLimiter {
   private buckets = new Map<string, TokenBucket>();
   private waitQueue = new Map<string, Array<{
     resolve: (value: boolean) => void;
-    timeout: NodeJS.Timeout;
+    timeout: ReturnType<typeof setTimeout>;
   }>>();
 
   /**

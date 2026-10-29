@@ -18,27 +18,9 @@ import type {
 } from '../types/restaurant.js';
 import { cache, CacheKeys, CacheTTL } from '../services/cache.js';
 import { rateLimiter } from '../services/rate-limiter.js';
+import { parseResySearchBody, type ParsedResyVenue } from '../resy/search-results.js';
 
 const BASE_URL = 'https://api.resy.com';
-
-// Resy API response types
-interface ResyVenueHit {
-  id: { resy: number };
-  name: string;
-  location: { name: string; neighborhood: string; time_zone?: string };
-  cuisine: string[] | string;
-  price_range: number;
-  rating: number;
-  images: string[];
-  url_slug?: string;
-}
-
-interface ResyFindResponse {
-  search: {
-    hits: ResyVenueHit[];
-  };
-}
-
 
 interface ResySlot {
   config: { id: number; type: string; token: string };
@@ -177,33 +159,41 @@ export class ResyPlatformClient extends BasePlatformClient {
         if (refreshed) {
           return this.request<T>(method, url, data, false);
         }
-        throw new Error('Resy authentication failed. Please update credentials using set_login tool.');
+        throw new Error('Resy authentication failed. Set Worker secrets with `wrangler secret put RESY_EMAIL` and `wrangler secret put RESY_PASSWORD`.');
       }
       throw error;
     }
   }
 
   async search(query: SearchQuery): Promise<Restaurant[]> {
-    const date = query.date || this.today();
-    const partySize = query.partySize || 2;
     const coords = this.getCityCoordinates(query.location);
 
     console.error(`Resy search: "${query.query}" in "${query.location}"`);
 
     try {
-      const findData = await this.client.get<ResyFindResponse>('/4/find', {
-        headers: this.getHeaders(),
-        params: {
-          lat: coords.lat,
-          long: coords.lng,
-          day: date,
-          party_size: partySize,
+      await this.ensureCredentials();
+      // /4/find answers with results.venues but does not filter by name (the NYC
+      // catalog is ~170MB). Name search lives on /3/venuesearch/search (search.hits).
+      // parseResySearchBody accepts either shape.
+      const response = await this.client.post(
+        '/3/venuesearch/search',
+        {
           query: query.query,
+          geo: { latitude: coords.lat, longitude: coords.lng },
+          per_page: 20,
+          types: ['venue'],
         },
-        timeout: 30000,
-      });
+        {
+          headers: {
+            ...this.getHeaders(),
+            'Content-Type': 'application/json',
+            Accept: 'application/json',
+          },
+          timeout: 30000,
+        }
+      );
 
-      const hits = findData.data?.search?.hits || [];
+      const hits = parseResySearchBody(response.data, query.query);
       console.error(`Resy search found ${hits.length} results`);
       return hits.map((hit) => this.mapToRestaurant(hit));
     } catch (error) {
@@ -468,9 +458,8 @@ export class ResyPlatformClient extends BasePlatformClient {
     );
 
     this.authToken = response.data.token;
+    // Cache the short-lived token only. Email and password stay in Worker secrets.
     await setCredential('resy-auth-token', this.authToken);
-    await setCredential('resy-email', email);
-    await setCredential('resy-password', password);
 
     return response.data;
   }
@@ -514,21 +503,19 @@ export class ResyPlatformClient extends BasePlatformClient {
   }
 
   // Helper methods
-  private mapToRestaurant(hit: ResyVenueHit): Restaurant {
-    const cuisines = Array.isArray(hit.cuisine) ? hit.cuisine : [hit.cuisine].filter(Boolean);
-
+  private mapToRestaurant(hit: ParsedResyVenue): Restaurant {
     return {
-      id: this.createId(hit.id.resy),
+      id: this.createId(hit.id),
       platform: this.name,
-      platformId: hit.id.resy,
+      platformId: hit.id,
       name: hit.name,
-      location: hit.location?.name || '',
-      neighborhood: hit.location?.neighborhood,
-      cuisine: cuisines.join(', '),
-      cuisines,
-      priceRange: hit.price_range || 0,
-      rating: hit.rating || 0,
-      imageUrl: hit.images?.[0],
+      location: hit.location,
+      neighborhood: hit.neighborhood || undefined,
+      cuisine: hit.cuisines.join(', '),
+      cuisines: hit.cuisines,
+      priceRange: hit.priceRange,
+      rating: hit.rating,
+      imageUrl: hit.imageUrl,
     };
   }
 

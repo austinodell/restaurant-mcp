@@ -8,5 +8,6 @@
   "minify": true,
   "kv_namespaces": [{ "binding": "CREDS", "id": "7d05dafe369446c29cdd0cd61bf6b60e" }],
   "triggers": { "crons": ["* * * * *"] }
-  // Secret (set via dashboard or `wrangler secret put MCP_TOKEN`): MCP_TOKEN
+  // Secrets (dashboard or `wrangler secret put`, never in this file):
+  // MCP_TOKEN, RESY_EMAIL, RESY_PASSWORD, optional RESY_AUTH_TOKEN
 }
