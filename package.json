@@ -1,4 +1,4 @@
 { "name": "restaurant-mcp", "version": "2.0.0", "type": "module", "private": true,
-  "scripts": { "build": "wrangler deploy --dry-run --outdir dist", "deploy": "wrangler deploy" },
+  "scripts": { "build": "wrangler deploy --dry-run --outdir dist", "deploy": "wrangler deploy", "typecheck": "tsc --noEmit", "test": "node --test --test-concurrency=1 test/snipe-store.test.mjs" },
   "dependencies": { "@modelcontextprotocol/sdk": "^1.24.0", "axios": "^1.7.9", "zod": "^3.25.0" },
   "devDependencies": { "wrangler": "^4", "@cloudflare/workers-types": "^4", "typescript": "^5" } }
