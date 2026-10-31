@@ -4,10 +4,37 @@
   "main": "src/index.ts",
   "compatibility_date": "2025-09-01",
   "compatibility_flags": ["nodejs_compat"],
-  "workers_dev": true,
+  "workers_dev": false,
   "minify": true,
-  "kv_namespaces": [{ "binding": "CREDS", "id": "7d05dafe369446c29cdd0cd61bf6b60e" }],
-  "triggers": { "crons": ["* * * * *"] }
-  // Secrets (dashboard or `wrangler secret put`, never in this file):
-  // MCP_TOKEN, RESY_EMAIL, RESY_PASSWORD, optional RESY_AUTH_TOKEN
+  "routes": [
+    { "pattern": "restaurant-mcp.odell.io", "custom_domain": true }
+  ],
+  "vars": {
+    "MCP_RESOURCE": "https://restaurant-mcp.odell.io/mcp",
+    "OWNER_EMAIL": "austin@odell.io"
+  },
+  "kv_namespaces": [
+    { "binding": "CREDS", "id": "7d05dafe369446c29cdd0cd61bf6b60e" },
+    { "binding": "OAUTH_KV", "id": "3d876299b9544f5ba24fe7fc865aa666" }
+  ],
+  "triggers": { "crons": ["* * * * *"] },
+  "observability": {
+    "enabled": true,
+    "logs": { "enabled": true, "invocation_logs": true },
+    "traces": { "enabled": true }
+  },
+  // Worker secrets (dashboard or `wrangler secret put`, never in this file):
+  // ACCESS_CLIENT_ID, ACCESS_CLIENT_SECRET, ACCESS_TOKEN_URL,
+  // ACCESS_AUTHORIZATION_URL, ACCESS_JWKS_URL, COOKIE_ENCRYPTION_KEY
+  // Upstream login, unchanged: RESY_EMAIL, RESY_PASSWORD, optional RESY_AUTH_TOKEN
+  "secrets": {
+    "required": [
+      "ACCESS_CLIENT_ID",
+      "ACCESS_CLIENT_SECRET",
+      "ACCESS_TOKEN_URL",
+      "ACCESS_AUTHORIZATION_URL",
+      "ACCESS_JWKS_URL",
+      "COOKIE_ENCRYPTION_KEY"
+    ]
+  }
 }
