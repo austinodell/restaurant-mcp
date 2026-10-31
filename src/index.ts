@@ -1,6 +1,8 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
+import OAuthProvider from '@cloudflare/workers-oauth-provider';
 import { z } from 'zod';
+import { handleAccessRequest } from './access-handler.js';
 
 import {
   setCredential,
@@ -292,26 +294,53 @@ function registerTools(server: McpServer) {
 }
 
 
-function timingSafeEqual(a: string, b: string) { if (a.length !== b.length) return false; let r = 0; for (let i = 0; i < a.length; i++) r |= a.charCodeAt(i) ^ b.charCodeAt(i); return r === 0; }
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, Accept, Authorization, Mcp-Session-Id, Mcp-Protocol-Version' };
-export default {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+
+const apiHandler = {
+  async fetch(request: Request, env: Env): Promise<Response> {
     setEnv(env);
-    const url = new URL(request.url);
-    if (request.method === 'OPTIONS') return new Response(null, { headers: cors });
-    if (url.pathname === '/health') return Response.json({ status: 'ok', service: 'restaurant-mcp', version: '2.0.0-workers' });
-    if (url.pathname !== '/mcp') return new Response('Not found', { status: 404 });
-    const auth = request.headers.get('authorization') || '';
-    const tok = auth.startsWith('Bearer ') ? auth.slice(7) : '';
-    if (!env.MCP_TOKEN || !timingSafeEqual(tok, env.MCP_TOKEN)) return Response.json({ error: 'Unauthorized' }, { status: 401, headers: cors });
-    if (request.method !== 'POST') return Response.json({ jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed' }, id: null }, { status: 405, headers: cors });
+    if (request.method !== 'POST') {
+      return Response.json({ jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed' }, id: null }, { status: 405, headers: cors });
+    }
     const server = new McpServer({ name: 'restaurant-reservations', version: '2.0.0' });
     registerTools(server);
     const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     await server.connect(transport);
     const res = await transport.handleRequest(request);
-    const h = new Headers(res.headers); for (const [k, v] of Object.entries(cors)) h.set(k, v);
+    const h = new Headers(res.headers);
+    for (const [k, v] of Object.entries(cors)) h.set(k, v);
     return new Response(res.body, { status: res.status, headers: h });
   },
-  async scheduled(_e: ScheduledController, env: Env, ctx: ExecutionContext) { setEnv(env); ctx.waitUntil(runDueSnipes()); },
 };
+
+let provider: OAuthProvider<Env> | undefined;
+
+function getProvider(env: Env): OAuthProvider<Env> {
+  if (!env.MCP_RESOURCE) throw new Error('MCP_RESOURCE is not configured');
+  if (!provider) {
+    provider = new OAuthProvider<Env>({
+      apiRoute: '/mcp',
+      apiHandler,
+      defaultHandler: { fetch: handleAccessRequest },
+      authorizeEndpoint: '/authorize',
+      tokenEndpoint: '/token',
+      clientRegistrationEndpoint: '/register',
+      resourceMetadata: {
+        resource: env.MCP_RESOURCE,
+        resource_name: 'Restaurant reservations',
+      },
+    });
+  }
+  return provider;
+}
+
+export default {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    setEnv(env);
+    return getProvider(env).fetch(request, env, ctx);
+  },
+  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    setEnv(env);
+    ctx.waitUntil(runDueSnipes());
+  },
+} satisfies ExportedHandler<Env>;
