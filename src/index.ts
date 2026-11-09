@@ -39,7 +39,8 @@ import {
   cancelSnipeSchema,
 } from './tools/snipe.js';
 import { runDueSnipes } from './sniper/scheduler.js';
-import { setEnv, type Env } from './env.js';
+import { getEnv, setEnv, type Env } from './env.js';
+import { appVersion, serverInfo } from './version.js';
 
 // Schemas for tool inputs
 const findTableSchema = z.object({
@@ -284,6 +285,10 @@ function registerTools(server: McpServer) {
     return { content: [{ type: 'text' as const, text: JSON.stringify({ id: `tock-${saved.slug}`, ...saved }, null, 2) }] };
   });
 
+  server.tool('get_server_info', 'Which version of restaurant-mcp is running and when that Worker version was deployed. Use it to check that a release is live.', {}, async () => {
+    return { content: [{ type: 'text' as const, text: JSON.stringify(serverInfo(getEnv()), null, 2) }] };
+  });
+
   server.tool('get_platform_status', 'Check health and rate limit status of all platforms.', {}, async () => {
     const health = await getPlatformHealth();
     const rateLimits = rateLimiter.getAllStatus();
@@ -302,7 +307,7 @@ const apiHandler = {
     if (request.method !== 'POST') {
       return Response.json({ jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed' }, id: null }, { status: 405, headers: cors });
     }
-    const server = new McpServer({ name: 'restaurant-reservations', version: '2.0.0' });
+    const server = new McpServer({ name: 'restaurant-reservations', version: appVersion(env) });
     registerTools(server);
     const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
     await server.connect(transport);

@@ -7,6 +7,7 @@ import {
 
 import type { Env } from "./env.js";
 import { identityAllowed } from "./owner-identity.js";
+import { appVersion } from "./version.js";
 
 type OauthEnv = Env & { OAUTH_PROVIDER: OAuthHelpers };
 
@@ -347,7 +348,7 @@ function authorizationFailure(error: unknown): Response {
 export async function handleAccessRequest(request: Request, env: Env, _ctx: ExecutionContext): Promise<Response> {
   const url = new URL(request.url);
   if (url.pathname === "/health" && request.method === "GET") {
-    return Response.json({ status: "ok", service: "restaurant-mcp", version: "2.0.0-workers" });
+    return Response.json({ status: "ok", service: "restaurant-mcp", version: appVersion(env) });
   }
   const ready = oauthEnv(env);
   if (ready instanceof Response) return ready;

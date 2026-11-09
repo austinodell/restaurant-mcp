@@ -23,6 +23,7 @@ const { runDueSnipes } = await import(`${base}/sniper/scheduler.js`);
 
 const { SNIPE_INDEX_KEY, SNIPE_DUE_LEAD_MS, createSnipe, getPendingSnipes, updateSnipeStatus, deleteSnipe, listSnipes } = store;
 const { identityAllowed } = await import(`${base}/owner-identity.js`);
+const { appVersion, serverInfo } = await import(`${base}/version.js`);
 
 function makeKv() {
   const data = new Map();
@@ -280,4 +281,20 @@ test('owner identity', () => {
   assert.equal(identityAllowed(undefined, 'austin@odell.io'), false);
   assert.equal(identityAllowed('austin@odell.io', ''), false);
   assert.equal(identityAllowed('austin@odell.io', undefined), false);
+});
+
+test('appVersion uses APP_VERSION from the deploy and falls back to the development version', () => {
+  assert.equal(appVersion({ APP_VERSION: '2.1.0' }), '2.1.0');
+  assert.equal(appVersion({ APP_VERSION: '2.1.0-3-gabc1234' }), '2.1.0-3-gabc1234');
+  assert.equal(appVersion({ APP_VERSION: ' ' }), '0.0.0-development');
+  assert.equal(appVersion({}), '0.0.0-development');
+  assert.equal(appVersion(null), '0.0.0-development');
+});
+
+test('serverInfo adds the Worker version id and deploy time when the binding exists', () => {
+  assert.deepEqual(serverInfo({}), { name: 'restaurant-mcp', version: '0.0.0-development' });
+  assert.deepEqual(
+    serverInfo({ APP_VERSION: '2.1.0', CF_VERSION_METADATA: { id: 'abc', tag: '', timestamp: '2026-11-09T22:00:00.000Z' } }),
+    { name: 'restaurant-mcp', version: '2.1.0', worker_version_id: 'abc', deployed_at: '2026-11-09T22:00:00.000Z' },
+  );
 });

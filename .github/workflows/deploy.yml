@@ -1,15 +1,35 @@
 name: Deploy Worker
 
+# On every push to master: run the tests, let semantic-release (.releaserc.json)
+# read the Conventional Commits since the last vX.Y.Z tag, then deploy.
+# feat → minor, fix/perf/revert/deps → patch, `!` or BREAKING CHANGE → major,
+# anything else → no release. A release creates the vX.Y.Z tag and a GitHub
+# Release. Nothing is committed to master. The deploy always runs and bakes the
+# version (git describe) into the Worker as APP_VERSION.
 on:
   push:
     branches: [master]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+
   deploy:
+    needs: test
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the release tag and create the GitHub Release
+    concurrency:
+      group: restaurant-production
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # semantic-release needs full history and tags
 
       - uses: actions/setup-node@v4
         with:
@@ -19,11 +39,21 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Type-check
-        run: npx tsc --noEmit
+      - name: Release
+        run: npx semantic-release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # "1.2.0" right after a release, "1.2.0-3-gabc1234" for unreleased commits.
+      - name: Version
+        id: version
+        run: echo "version=$(git describe --tags --always | sed 's/^v//')" >> "$GITHUB_OUTPUT"
+
+      # Worker secrets live on the Worker (wrangler secret put), not in GitHub.
+      # wrangler.jsonc lists them under secrets.required.
       - name: Deploy
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy --var APP_VERSION:${{ steps.version.outputs.version }}

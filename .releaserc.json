@@ -1,0 +1,72 @@
+{
+  "branches": [
+    "master"
+  ],
+  "tagFormat": "v${version}",
+  "plugins": [
+    [
+      "@semantic-release/commit-analyzer",
+      {
+        "preset": "conventionalcommits",
+        "releaseRules": [
+          {
+            "type": "deps",
+            "release": "patch"
+          }
+        ],
+        "parserOpts": {
+          "mergePattern": "^Merge pull request #(\\d+) from (\\S+)$",
+          "mergeCorrespondence": [
+            "id",
+            "source"
+          ]
+        }
+      }
+    ],
+    [
+      "@semantic-release/release-notes-generator",
+      {
+        "preset": "conventionalcommits",
+        "presetConfig": {
+          "types": [
+            {
+              "type": "feat",
+              "section": "Features"
+            },
+            {
+              "type": "fix",
+              "section": "Fixes"
+            },
+            {
+              "type": "perf",
+              "section": "Performance"
+            },
+            {
+              "type": "revert",
+              "section": "Reverts"
+            },
+            {
+              "type": "deps",
+              "section": "Dependencies"
+            }
+          ]
+        },
+        "parserOpts": {
+          "mergePattern": "^Merge pull request #(\\d+) from (\\S+)$",
+          "mergeCorrespondence": [
+            "id",
+            "source"
+          ]
+        }
+      }
+    ],
+    [
+      "@semantic-release/github",
+      {
+        "successComment": false,
+        "failComment": false,
+        "releasedLabels": false
+      }
+    ]
+  ]
+}

@@ -1,0 +1,31 @@
+name: Test
+
+on:
+  pull_request:
+  workflow_dispatch:
+  # deploy.yml calls this before releasing and deploying.
+  workflow_call:
+
+permissions:
+  contents: read
+
+# A new push to a PR cancels that PR's older run. Runs on main always finish.
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Type-check
+        run: npx tsc --noEmit
+      - run: npm test
+      - name: Bundle
+        run: npm run build

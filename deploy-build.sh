@@ -76,6 +76,13 @@ for (const kv of config.kv_namespaces ?? []) {
 for (const [name, text] of Object.entries(config.vars ?? {})) {
   bindings.push({ type: "plain_text", name, text });
 }
+// Same version the GitHub deploy passes with --var (see src/version.ts).
+const described = spawnSync("git", ["describe", "--tags", "--always"], { cwd: root, encoding: "utf8" });
+const appVersion = described.status === 0 ? described.stdout.trim().replace(/^v/, "") : "";
+if (appVersion) bindings.push({ type: "plain_text", name: "APP_VERSION", text: appVersion });
+if (config.version_metadata?.binding) {
+  bindings.push({ type: "version_metadata", name: config.version_metadata.binding });
+}
 
 const metadata = {
   main_module: mainModule,

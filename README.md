@@ -242,6 +242,20 @@ A cron trigger (`* * * * *`) runs due snipes. That trigger does not use the MCP 
 | `list_snipes` | View scheduled snipes |
 | `cancel_snipe` | Cancel a scheduled snipe |
 | `get_platform_status` | Platform health, rate limits, and cache stats |
+| `get_server_info` | Running version and when that Worker version was deployed |
+
+## Releases
+
+Releasing is automatic, using [semantic-release](https://semantic-release.gitbook.io) and [Conventional Commits](https://www.conventionalcommits.org) (config in `.releaserc.json`), the same as `imessage-mcp`. Pull requests run **Test**. On each push to `master`, **Deploy Worker** runs the tests, then semantic-release reads the commits since the latest `vX.Y.Z` tag:
+
+| Commit | Release |
+|---|---|
+| `feat: …` | minor |
+| `fix: …`, `perf: …`, `revert: …`, `deps: …` | patch |
+| `feat!: …` (any type with `!`), or `BREAKING CHANGE:` in the body | major |
+| `docs:`, `chore:`, `ci:`, `test:`, `refactor:`, anything else | none |
+
+A release creates the `vX.Y.Z` tag and a GitHub Release with notes grouped by type. The Worker deploys on every push either way, with `git describe` passed as `APP_VERSION` (`2.1.0` right after a release, `2.1.0-3-gabc1234` for unreleased commits). `deploy-build.sh` sends the same value. `/health`, the MCP handshake and `get_server_info` report it. Nothing is committed to `master`; the committed `package.json` version stays `0.0.0-development` and the tags are the source of truth. **Give PRs a Conventional title**, such as `feat: add get_server_info`. A squash merge uses the title as the commit message, and for a "Merge pull request #N" commit semantic-release reads the title on the line after it.
 
 ## Security
 
