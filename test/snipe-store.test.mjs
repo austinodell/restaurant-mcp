@@ -22,7 +22,6 @@ const { PRE_RELEASE_START_MS } = await import(`${base}/sniper/executor.js`);
 const { runDueSnipes } = await import(`${base}/sniper/scheduler.js`);
 
 const { SNIPE_INDEX_KEY, SNIPE_DUE_LEAD_MS, createSnipe, getPendingSnipes, updateSnipeStatus, deleteSnipe, listSnipes } = store;
-const { identityAllowed } = await import(`${base}/owner-identity.js`);
 const { appVersion, serverInfo } = await import(`${base}/version.js`);
 
 function makeKv() {
@@ -272,15 +271,6 @@ test('snipe due index', { concurrency: false }, async (t) => {
     assert.deepEqual(readIndex(data).pending, []);
     assert.equal(ops.list, 0);
   });
-});
-
-test('owner identity', () => {
-  assert.equal(identityAllowed('Austin@Odell.io', 'austin@odell.io'), true);
-  assert.equal(identityAllowed('  austin@odell.io  ', 'austin@odell.io'), true);
-  assert.equal(identityAllowed('other@example.com', 'austin@odell.io'), false);
-  assert.equal(identityAllowed(undefined, 'austin@odell.io'), false);
-  assert.equal(identityAllowed('austin@odell.io', ''), false);
-  assert.equal(identityAllowed('austin@odell.io', undefined), false);
 });
 
 test('appVersion uses APP_VERSION from the deploy and falls back to the development version', () => {

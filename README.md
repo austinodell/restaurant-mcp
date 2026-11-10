@@ -2,88 +2,35 @@
 
 A remote MCP server for searching and booking restaurant reservations. It runs as a Cloudflare Worker at `https://restaurant-mcp.odell.io/mcp`.
 
-Clients authenticate with OAuth 2.1. The Worker is the authorization server (`workers-oauth-provider`) and Cloudflare Access is the identity provider, using an Access for SaaS OIDC application. This is the same shape as [Cloudflare's remote MCP Access example](https://github.com/cloudflare/ai/tree/main/demos/remote-mcp-cf-access) and the [Secure MCP servers](https://developers.cloudflare.com/cloudflare-one/access-controls/ai-controls/secure-mcp-servers/) guide. There is no static bearer token and no `MCP_TOKEN` fallback.
+Authentication is handled by Cloudflare Access, not by this Worker. `restaurant-mcp.odell.io` is a **self-hosted Access application with Managed OAuth** enabled. Access runs the OAuth flow with MCP clients (discovery, dynamic client registration, login), then forwards each request to the Worker with a signed `Cf-Access-Jwt-Assertion` JWT. The Worker verifies that JWT on every `/mcp` request (RS256 signature against the team's keys, issuer, audience and expiry) and answers `401` otherwise, so it never serves a request that did not come through the Access application. There is no static bearer token, no `MCP_TOKEN` fallback, and no OAuth server in this code.
 
-Discovery:
+Who may connect is decided only by the Access policy (see below), so adding a login method or another email never needs a deploy.
 
-- `https://restaurant-mcp.odell.io/.well-known/oauth-authorization-server`
-- `https://restaurant-mcp.odell.io/.well-known/oauth-protected-resource/mcp`
-- Dynamic client registration: `https://restaurant-mcp.odell.io/register`
+- `POST /mcp`: requires a valid Access JWT
+- `GET /health`: public, returns status and version (Access still gates it at the edge unless you add a Bypass rule for that path)
+- The once-a-minute snipe cron does not go through HTTP or Access
 
-`GET /health` stays public. `POST /mcp` requires an access token issued by this Worker. The once-a-minute snipe cron does not go through OAuth.
+The same hostname can also be added to a Cloudflare MCP Server Portal.
 
 ## Zero Trust setup
 
-Do these in the Cloudflare account that owns the `odell.io` zone (Zero Trust team `aodell.cloudflareaccess.com`) before deploying. The One-time PIN identity provider is already on that team.
+Do this in the Cloudflare account that owns the `odell.io` zone (Zero Trust team `aodell.cloudflareaccess.com`) **before merging**, because the deploy requires the `ACCESS_AUD` secret.
 
-### 1. Access for SaaS OIDC application
+### 1. Self-hosted Access application
 
-1. Open [Zero Trust](https://one.dash.cloudflare.com/) → **Access controls** → **Applications**.
-2. **Create new application** → **SaaS**.
-3. Name it `restaurant-mcp`.
-4. Authentication protocol: **OIDC**. Select **Add application**.
-5. Redirect URL (exact): `https://restaurant-mcp.odell.io/callback`
-6. Scopes: `openid`, `email`, `profile`. The Worker requests those so the ID token contains `email`.
-7. Grant type: **Authorization code with PKCE** (`authorization_code_with_pkce`). The authorize redirect sends `code_challenge` with `S256`. Optional: turn on **Refresh tokens** if you want fewer Access logins. Do not use the OAuth values from a third-party IdP; use the Access for SaaS endpoints.
-8. Copy these values. They become Worker secrets in the next section. Do not commit them.
+1. [Zero Trust](https://one.dash.cloudflare.com/) → **Access controls** → **Applications** → **Add an application** → **Self-hosted**.
+2. Name `restaurant-mcp`. Public hostname `restaurant-mcp.odell.io`, no path (the whole host).
+3. Enable **Managed OAuth** on the application so MCP clients get the OAuth discovery flow.
+4. Add one **Allow** policy with an Include rule for the emails that may connect (currently `austin@odell.io` and `austintodell@gmail.com`). No Bypass and no Everyone rules.
+5. Copy the application's **Audience (AUD) tag**.
 
-   | Worker secret | Access for SaaS field |
-   | --- | --- |
-   | `ACCESS_CLIENT_ID` | Client ID |
-   | `ACCESS_CLIENT_SECRET` | Client secret |
-   | `ACCESS_TOKEN_URL` | Token endpoint |
-   | `ACCESS_AUTHORIZATION_URL` | Authorization endpoint |
-   | `ACCESS_JWKS_URL` | Key endpoint (JWKS) |
+### 2. Worker configuration
 
-   The endpoints look like `https://aodell.cloudflareaccess.com/cdn-cgi/access/sso/oidc/<client_id>/{authorization,token,jwks}`.
-
-### 2. Allow only the owner
-
-On that SaaS application, add one Allow policy and no others.
-
-| Field | Value |
-| --- | --- |
-| Policy name | `restaurant-mcp owner` |
-| Action | Allow |
-| Include | Selector **Emails**, value `austin@odell.io` |
-| Exclude / Require | empty |
-| Identity provider | One-time PIN (the team's only IdP) |
-
-One Include rule is enough. A second Include is OR and would let someone else through. Do not add a Bypass policy and do not add an Everyone rule.
-
-`wrangler.jsonc` sets `OWNER_EMAIL` to `austin@odell.io`. After Access issues an ID token, the Worker checks the `email` claim against that variable and refuses every other address. The Access policy and `OWNER_EMAIL` must stay the same address. Changing who can connect means editing both, then redeploying.
-
-### 3. OAuth state KV
-
-The authorization server stores grants, registration, and upstream login state in the `OAUTH_KV` binding. That namespace already exists:
-
-| Binding | Name | ID |
-| --- | --- | --- |
-| `OAUTH_KV` | `restaurant-mcp-oauth` | `3d876299b9544f5ba24fe7fc865aa666` |
-| `CREDS` | `restaurant-mcp-creds` | `7d05dafe369446c29cdd0cd61bf6b60e` |
-
-`CREDS` is unchanged. It still holds API keys, cached Resy tokens, saved Tock venues, and snipe jobs. To recreate the OAuth namespace on a new account:
+`wrangler.jsonc` sets `ACCESS_TEAM_DOMAIN` (`aodell.cloudflareaccess.com`). Put the AUD tag in as a secret; `wrangler deploy` stops if it is missing:
 
 ```bash
-npx wrangler kv namespace create OAUTH_KV
+npx wrangler secret put ACCESS_AUD
 ```
-
-Put the printed id in `wrangler.jsonc` under the `OAUTH_KV` binding, and in `deploy-build.sh` the binding is read from that file.
-
-### 4. Worker secrets
-
-Generate the cookie key locally (`openssl rand -hex 32` prints 64 hex characters; the Worker requires at least 32). Then:
-
-```bash
-npx wrangler secret put ACCESS_CLIENT_ID
-npx wrangler secret put ACCESS_CLIENT_SECRET
-npx wrangler secret put ACCESS_TOKEN_URL
-npx wrangler secret put ACCESS_AUTHORIZATION_URL
-npx wrangler secret put ACCESS_JWKS_URL
-npx wrangler secret put COOKIE_ENCRYPTION_KEY
-```
-
-`COOKIE_ENCRYPTION_KEY` signs the "remember this MCP client" cookie. It is not an Access credential.
 
 Upstream Resy login stays in Worker secrets and is never written to KV:
 
@@ -93,48 +40,34 @@ npx wrangler secret put RESY_PASSWORD
 npx wrangler secret put RESY_AUTH_TOKEN   # optional
 ```
 
-Non-secret vars in `wrangler.jsonc`:
+`CREDS` (`restaurant-mcp-creds`, `7d05dafe369446c29cdd0cd61bf6b60e`) holds API keys, cached Resy tokens, saved Tock venues, and snipe jobs.
 
-- `MCP_RESOURCE` = `https://restaurant-mcp.odell.io/mcp` (every token is bound to this URL)
-- `OWNER_EMAIL` = `austin@odell.io`
+For local `wrangler dev`, copy `.dev.vars.example` to `.dev.vars`. Requests must still carry an Access-issued JWT, so test authenticated calls against the deployed hostname.
 
-For local `wrangler dev`, copy `.dev.vars.example` to `.dev.vars` and fill the same Access secrets. `.dev.vars` is gitignored. Add `http://localhost:8787/callback` as a second redirect URL on the SaaS app only if you need local login, and point `MCP_RESOURCE` at that local `/mcp` URL in `.dev.vars`.
+### 3. Deploy
 
-### 5. Deploy
+This repo deploys from GitHub Actions on every push to `master` (see Releases). Deploying by hand:
 
-Do not deploy until the Access app, the owner policy, and the six Access secrets exist. `wrangler.jsonc` marks those secrets required, so `wrangler deploy` stops if they are missing.
+```bash
+npx wrangler deploy
+```
 
-This repo is deployed with the Cloudflare API, not Workers Builds. From a shell that has `CLOUDFLARE_API_TOKEN` (Workers Scripts Write, and Account Settings Read or the equivalent that can attach a Worker custom domain on zone `odell.io`) and `CLOUDFLARE_ACCOUNT_ID`:
+or, through the Cloudflare API with `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` set (the script also refuses to upload if `ACCESS_AUD` is missing):
 
 ```bash
 chmod +x deploy-build.sh
 ./deploy-build.sh
 ```
 
-The script:
-
-1. Bundles with `wrangler deploy --dry-run --outdir dist` (no upload in that step).
-2. Refuses to continue if any required Access secret name is missing on the Worker. It lists names only.
-3. Uploads a version with `CREDS`, `OAUTH_KV`, `MCP_RESOURCE`, and `OWNER_EMAIL`, and keeps existing `secret_text` bindings (so `RESY_EMAIL`, `RESY_PASSWORD`, and `RESY_AUTH_TOKEN` stay).
-4. Deploys that version to 100%.
-5. Sets the `* * * * *` cron, Workers logs, and traces.
-6. Attaches the custom domain `restaurant-mcp.odell.io` on zone `odell.io` if it is not already attached. Wrangler uses the same hostname with `custom_domain: true`, which creates the proxied DNS record on deploy.
-7. Turns off the `workers.dev` subdomain (`workers_dev` is false) so the only public origin is the custom domain.
-8. Deletes the `MCP_TOKEN` secret when it is still present.
-
 `./deploy-build.sh --build-only` prints the bundle and binding names and does not call the API.
 
-`npx wrangler deploy` is the other path. It reads the same `wrangler.jsonc` (custom domain, both KV bindings, observability, required secrets). After a Wrangler deploy, delete the old token if it is still listed:
+#### Migrating from the old Worker-side OAuth
 
-```bash
-npx wrangler secret delete MCP_TOKEN
-```
+Earlier versions ran their own OAuth server (`workers-oauth-provider`) with an Access for SaaS OIDC app. After this version is live and a client connects successfully, these are unused and can be removed: the Access for SaaS application, the Worker secrets `ACCESS_CLIENT_ID`, `ACCESS_CLIENT_SECRET`, `ACCESS_TOKEN_URL`, `ACCESS_AUTHORIZATION_URL`, `ACCESS_JWKS_URL`, `COOKIE_ENCRYPTION_KEY`, the `OWNER_EMAIL` var, and the `OAUTH_KV` namespace (`restaurant-mcp-oauth`). MCP clients must reconnect once, since tokens issued by the old server are no longer accepted.
 
-`.github/workflows/deploy.yml` still runs `wrangler deploy` on pushes to `master`. It fails closed until the Access secrets exist on the Worker. It does not set secrets.
+### 4. Connect a client
 
-### 6. Connect a client
-
-Use the MCP URL `https://restaurant-mcp.odell.io/mcp`. The client discovers the authorization server, registers at `/register`, and opens a browser. Approve the client, then complete the Access one-time PIN as `austin@odell.io`.
+Use the MCP URL `https://restaurant-mcp.odell.io/mcp`. The client discovers Access' OAuth endpoints, registers itself, and opens a browser to sign in through Access.
 
 Cursor, a remote MCP entry:
 
@@ -218,7 +151,7 @@ The sniper will:
 3. Instantly book the first matching slot
 4. Return confirmation or error
 
-A cron trigger (`* * * * *`) runs due snipes. That trigger does not use the MCP OAuth token.
+A cron trigger (`* * * * *`) runs due snipes. That trigger does not go through Access.
 
 ## Available Tools
 
@@ -262,8 +195,8 @@ A release creates the `vX.Y.Z` tag and a GitHub Release with notes grouped by ty
 - **No credit card data**: This MCP never handles payment info. Bookings use payment methods saved in your Resy/OpenTable accounts.
 - **KV credentials**: API keys and cached Resy auth tokens live in the `CREDS` KV namespace. Resy email and password do not
 - **Resy login secrets**: `RESY_EMAIL` and `RESY_PASSWORD` (optional `RESY_AUTH_TOKEN`) are Worker secrets and override KV
-- **Access OAuth**: `/mcp` accepts only tokens this Worker issues after Cloudflare Access login. `MCP_TOKEN` is not read
-- **Owner only**: the Access policy includes only `austin@odell.io`, and the Worker rejects any other verified email
+- **Cloudflare Access**: `/mcp` requires a valid `Cf-Access-Jwt-Assertion` (signature, issuer, audience, expiry), so only requests that passed the Access application are served. `MCP_TOKEN` is not read
+- **Allow-list in Access**: only the emails in the Access policy can sign in
 - **HTTPS only**: The public hostname is `restaurant-mcp.odell.io`
 - **Rate limited**: Max 10 requests/minute per platform
 
@@ -305,7 +238,7 @@ The auth token expired and login could not refresh it. Set `RESY_EMAIL` and `RES
 This is expected. OpenTable doesn't allow third-party booking - click the URL to complete on their site.
 
 ### MCP client stays unauthorized
-Confirm the SaaS redirect URL is exactly `https://restaurant-mcp.odell.io/callback`, the six Access secrets are set, and the signed-in email is `austin@odell.io`. A static `Authorization: Bearer` value from the old `MCP_TOKEN` is rejected.
+Check that the Access application has Managed OAuth enabled and your email in its Allow policy, that `ACCESS_AUD` matches the application's AUD tag, and that `ACCESS_TEAM_DOMAIN` is the team domain. The Worker logs the reason for each rejected token (`access token rejected`) without logging the token.
 
 ## Limitations
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build restaurant-mcp and upload it through the Cloudflare API.
-# Does not print secret values. Refuses to upload until the Access secrets exist.
+# Does not print secret values. Refuses to upload until the ACCESS_AUD secret exists.
 # Pass --build-only to bundle and print binding names without calling the API.
 set -euo pipefail
 
@@ -32,14 +32,7 @@ const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
 const token = process.env.CLOUDFLARE_API_TOKEN;
 const root = process.cwd();
 
-const REQUIRED_SECRETS = [
-  "ACCESS_CLIENT_ID",
-  "ACCESS_CLIENT_SECRET",
-  "ACCESS_TOKEN_URL",
-  "ACCESS_AUTHORIZATION_URL",
-  "ACCESS_JWKS_URL",
-  "COOKIE_ENCRYPTION_KEY",
-];
+const REQUIRED_SECRETS = ["ACCESS_AUD"];
 const REMOVED_SECRET = "MCP_TOKEN";
 
 function parseJsonc(file) {
@@ -143,7 +136,7 @@ if (!versionId) throw new Error("Upload did not return a version id");
 await cf("POST", `/accounts/${accountId}/workers/scripts/${scriptName}/deployments`, {
   json: {
     strategy: "percentage",
-    annotations: { "workers/message": "Deploy Access OAuth build" },
+    annotations: { "workers/message": "Deploy Cloudflare Access JWT build" },
     versions: [{ version_id: versionId, percentage: 100 }],
   },
 });
