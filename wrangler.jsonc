@@ -10,12 +10,10 @@
     { "pattern": "restaurant-mcp.odell.io", "custom_domain": true }
   ],
   "vars": {
-    "MCP_RESOURCE": "https://restaurant-mcp.odell.io/mcp",
-    "OWNER_EMAIL": "austin@odell.io"
+    "ACCESS_TEAM_DOMAIN": "aodell.cloudflareaccess.com"
   },
   "kv_namespaces": [
-    { "binding": "CREDS", "id": "7d05dafe369446c29cdd0cd61bf6b60e" },
-    { "binding": "OAUTH_KV", "id": "3d876299b9544f5ba24fe7fc865aa666" }
+    { "binding": "CREDS", "id": "7d05dafe369446c29cdd0cd61bf6b60e" }
   ],
   // Worker version id and deploy time for get_server_info.
   "version_metadata": { "binding": "CF_VERSION_METADATA" },
@@ -26,17 +24,9 @@
     "traces": { "enabled": true }
   },
   // Worker secrets (dashboard or `wrangler secret put`, never in this file):
-  // ACCESS_CLIENT_ID, ACCESS_CLIENT_SECRET, ACCESS_TOKEN_URL,
-  // ACCESS_AUTHORIZATION_URL, ACCESS_JWKS_URL, COOKIE_ENCRYPTION_KEY
+  // ACCESS_AUD: the Audience (AUD) tag of the self-hosted Access application
   // Upstream login, unchanged: RESY_EMAIL, RESY_PASSWORD, optional RESY_AUTH_TOKEN
   "secrets": {
-    "required": [
-      "ACCESS_CLIENT_ID",
-      "ACCESS_CLIENT_SECRET",
-      "ACCESS_TOKEN_URL",
-      "ACCESS_AUTHORIZATION_URL",
-      "ACCESS_JWKS_URL",
-      "COOKIE_ENCRYPTION_KEY"
-    ]
+    "required": ["ACCESS_AUD"]
   }
 }

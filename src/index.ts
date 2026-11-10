@@ -1,8 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
-import OAuthProvider from '@cloudflare/workers-oauth-provider';
 import { z } from 'zod';
-import { handleAccessRequest } from './access-handler.js';
+import { verifyAccessRequest } from './access-auth.js';
 
 import {
   setCredential,
@@ -301,48 +300,34 @@ function registerTools(server: McpServer) {
 
 const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type, Accept, Authorization, Mcp-Session-Id, Mcp-Protocol-Version' };
 
-const apiHandler = {
-  async fetch(request: Request, env: Env): Promise<Response> {
-    setEnv(env);
-    if (request.method !== 'POST') {
-      return Response.json({ jsonrpc: '2.0', error: { code: -32000, message: 'Method not allowed' }, id: null }, { status: 405, headers: cors });
-    }
-    const server = new McpServer({ name: 'restaurant-reservations', version: appVersion(env) });
-    registerTools(server);
-    const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
-    await server.connect(transport);
-    const res = await transport.handleRequest(request);
-    const h = new Headers(res.headers);
-    for (const [k, v] of Object.entries(cors)) h.set(k, v);
-    return new Response(res.body, { status: res.status, headers: h });
-  },
-};
+const jsonRpcError = (status: number, message: string, headers: Record<string, string> = {}) =>
+  Response.json({ jsonrpc: '2.0', error: { code: -32000, message }, id: null }, { status, headers: { ...cors, ...headers } });
 
-let provider: OAuthProvider<Env> | undefined;
-
-function getProvider(env: Env): OAuthProvider<Env> {
-  if (!env.MCP_RESOURCE) throw new Error('MCP_RESOURCE is not configured');
-  if (!provider) {
-    provider = new OAuthProvider<Env>({
-      apiRoute: '/mcp',
-      apiHandler,
-      defaultHandler: { fetch: handleAccessRequest },
-      authorizeEndpoint: '/authorize',
-      tokenEndpoint: '/token',
-      clientRegistrationEndpoint: '/register',
-      resourceMetadata: {
-        resource: env.MCP_RESOURCE,
-        resource_name: 'Restaurant reservations',
-      },
-    });
-  }
-  return provider;
+async function handleMcp(request: Request, env: Env): Promise<Response> {
+  if (request.method !== 'POST') return jsonRpcError(405, 'Method not allowed');
+  const server = new McpServer({ name: 'restaurant-reservations', version: appVersion(env) });
+  registerTools(server);
+  const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
+  await server.connect(transport);
+  const res = await transport.handleRequest(request);
+  const h = new Headers(res.headers);
+  for (const [k, v] of Object.entries(cors)) h.set(k, v);
+  return new Response(res.body, { status: res.status, headers: h });
 }
 
 export default {
-  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+  async fetch(request: Request, env: Env): Promise<Response> {
     setEnv(env);
-    return getProvider(env).fetch(request, env, ctx);
+    const url = new URL(request.url);
+    if (url.pathname === '/health' && request.method === 'GET') {
+      return Response.json({ status: 'ok', service: 'restaurant-mcp', version: appVersion(env) });
+    }
+    if (url.pathname !== '/mcp') return new Response('Not found', { status: 404 });
+    if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
+    // Cloudflare Access authenticates the caller before the Worker runs. Re-check its signed JWT here.
+    const access = await verifyAccessRequest(request, env);
+    if (!access.ok) return jsonRpcError(access.status, access.reason);
+    return handleMcp(request, env);
   },
   async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     setEnv(env);

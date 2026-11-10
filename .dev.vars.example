@@ -1,6 +1,4 @@
-ACCESS_CLIENT_ID=
-ACCESS_CLIENT_SECRET=
-ACCESS_TOKEN_URL=
-ACCESS_AUTHORIZATION_URL=
-ACCESS_JWKS_URL=
-COOKIE_ENCRYPTION_KEY=
+# Audience (AUD) tag of the self-hosted Access application for restaurant-mcp.odell.io.
+# Local requests must also carry a valid Cf-Access-Jwt-Assertion header, which only
+# Access issues, so use the deployed hostname for end-to-end testing.
+ACCESS_AUD=

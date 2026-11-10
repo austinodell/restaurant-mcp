@@ -1,8 +1,5 @@
-import type { OAuthHelpers } from "@cloudflare/workers-oauth-provider";
-
 /** Bindings come from `src/cloudflare-bindings.d.ts` (`wrangler types`). */
 export interface Env extends CloudflareBindings {
-  OAUTH_PROVIDER?: OAuthHelpers;
   [k: string]: unknown;
 }
 

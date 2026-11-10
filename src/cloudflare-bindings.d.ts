@@ -6,15 +6,8 @@ declare namespace Cloudflare {
 	}
 	interface Env {
 		CREDS: KVNamespace;
-		OAUTH_KV: KVNamespace;
-		MCP_RESOURCE: "https://restaurant-mcp.odell.io/mcp";
-		OWNER_EMAIL: "austin@odell.io";
-		ACCESS_CLIENT_ID: string;
-		ACCESS_CLIENT_SECRET: string;
-		ACCESS_TOKEN_URL: string;
-		ACCESS_AUTHORIZATION_URL: string;
-		ACCESS_JWKS_URL: string;
-		COOKIE_ENCRYPTION_KEY: string;
+		ACCESS_TEAM_DOMAIN: "aodell.cloudflareaccess.com";
+		ACCESS_AUD: string;
 	}
 }
 interface CloudflareBindings extends Cloudflare.Env {}
@@ -22,5 +15,5 @@ type StringifyValues<EnvType extends Record<string, unknown>> = {
 	[Binding in keyof EnvType]: EnvType[Binding] extends string ? EnvType[Binding] : string;
 };
 declare namespace NodeJS {
-	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "MCP_RESOURCE" | "OWNER_EMAIL" | "ACCESS_CLIENT_ID" | "ACCESS_CLIENT_SECRET" | "ACCESS_TOKEN_URL" | "ACCESS_AUTHORIZATION_URL" | "ACCESS_JWKS_URL" | "COOKIE_ENCRYPTION_KEY">> {}
+	interface ProcessEnv extends StringifyValues<Pick<Cloudflare.Env, "ACCESS_TEAM_DOMAIN" | "ACCESS_AUD">> {}
 }
