@@ -232,7 +232,7 @@ function registerTools(server: McpServer) {
       statuses.push({ ...status, isValid: true });
     }
     if (input.platform === 'tock' || input.platform === 'all') {
-      statuses.push({ platform: 'tock', hasApiKey: false, hasAuthToken: false, hasLogin: false, isValid: true });
+      statuses.push({ platform: 'tock', hasApiKey: false, hasAuthToken: false, hasLogin: false, isValid: false, note: 'Anonymous availability only; checkout is completed on exploretock.com.' });
     }
     return { content: [{ type: 'text' as const, text: JSON.stringify(statuses, null, 2) }] };
   });
@@ -334,3 +334,4 @@ export default {
     ctx.waitUntil(runDueSnipes());
   },
 } satisfies ExportedHandler<Env>;
+
