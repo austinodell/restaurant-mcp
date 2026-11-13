@@ -221,15 +221,10 @@ A release creates the `vX.Y.Z` tag and a GitHub Release with notes grouped by ty
 - Booking returns `https://www.sevenrooms.com/reservations/<slug>`
 
 ### Tock
-- Availability uses native Worker `fetch`: `POST /api/consumer/calendar/full/v2`, an empty binary body, `application/octet-stream`, and `X-Tock-Stream-Format: proto2`. The protobuf calendar is decoded and filtered by local date, party-size limits, ticket capacity, and experience.
-- Venue HTML supplies the business ID, anonymous JWT, and build number. JWTs stay in request memory; they are never saved to KV or logged. This uses a private, undocumented website API, not the official business data API.
-- Public pages may be challenged. Save `slug` + `business_id` with `add_tock_venue` to allow a calendar attempt even if page bootstrap fails. A saved ID does not guarantee the calendar will accept an anonymous request.
-- Cloudflare challenges, HTTP errors, and unexpected protobuf/HTML responses fail explicitly; they are not reported as no availability. No browser, native executable, or external proxy is used.
-- Search only returns venues saved in KV; this experiment does not add a directory search.
-- Tock checkout remains a website handoff. `make_reservation` returns `success: false` with the booking URL and explains that no reservation was made. `check_auth_status` reports Tock as unauthenticated.
-- Protocol research: [table-reservation-goat calendar client](https://github.com/mvanhorn/printing-press-library/blob/main/library/food-and-dining/table-reservation-goat/internal/source/tock/calendar.go). The Worker decoder is implemented locally without adding that native client as a dependency.
-
-After deployment, run `check_availability` for a known `tock-<slug>` and a future date. If bootstrap is challenged, save its known business ID using `add_tock_venue` and repeat. A challenge at the calendar endpoint confirms the remaining network-access limitation; revert this PR if the experiment is unsuccessful. Tests cover protocol fixtures and mocked fetches, not live Worker-to-Tock access.
+- Availability is `POST /api/consumer/calendar/full/v2` with an `x-tock-scope` business id
+- Public pages are often challenged, so save `slug` + `business_id` with `add_tock_venue` when a slug cannot be resolved
+- There is no public directory search; search only returns venues saved in KV
+- Booking stays a link
 
 ## Troubleshooting
 
@@ -250,4 +245,3 @@ Check that the Access application has Managed OAuth enabled and your email in it
 - Uses unofficial APIs that could change
 - OpenTable requires manual booking completion
 - For personal use only
-

@@ -7,7 +7,6 @@
 
 import { BasePlatformClient } from './base.js';
 import { getEnv } from '../env.js';
-import { bootstrapFromHtml, decodeCalendar, type TockBootstrap } from '../tock/calendar.js';
 import type {
   PlatformName,
   Restaurant,
@@ -33,7 +32,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function challenged(status: number, text: string): boolean {
-  return /<title>\s*Just a moment|_cf_chl_opt/i.test(text);
+  if (status === 403 || status === 503) return true;
+  return /just a moment|cf-mitigated|challenge-platform|attention required|cdn-cgi\/challenge/i.test(text.slice(0, 2500));
 }
 
 export function businessFromTockHtml(html: string, slug: string): SavedVenue | null {
@@ -222,62 +222,61 @@ export class TockPlatformClient extends BasePlatformClient {
       );
     }
 
-    // Bootstrap each request: anonymous JWTs are never persisted in KV or logs.
-    let bootstrap: TockBootstrap = venue.bootstrap || { businessId: venue.businessId };
-    let bootstrapError: string | undefined;
-    if (!venue.bootstrap && !/^\d+$/.test(venue.slug)) {
-      try { bootstrap = await this.bootstrap(venue.slug); }
-      catch (error) { bootstrapError = error instanceof Error ? error.message : 'bootstrap failed'; }
-    }
-    const headers: Record<string, string> = {
-      Accept: 'application/octet-stream',
-      'Content-Type': 'application/octet-stream',
-      'X-Tock-Stream-Format': 'proto2',
-      'X-Tock-Scope': JSON.stringify({ businessId: bootstrap.businessId }),
-      'X-Tock-Path': `/${venue.slug}`,
-      Origin: ORIGIN,
-      Referer: `${ORIGIN}/${venue.slug}`,
+    const scope = {
+      businessId: venue.businessId,
+      site: 'EXPLORETOCK',
+      ...(venue.businessGroupId ? { businessGroupId: venue.businessGroupId } : {}),
     };
-    if (bootstrap.jwt) headers['X-Tock-Authorization'] = bootstrap.jwt;
-    if (bootstrap.build) headers['X-Tock-Build-Number'] = bootstrap.build;
     let response: Response;
     try {
-      response = await fetch(CALENDAR_URL, { method: 'POST', headers,
-        body: new Uint8Array(0), signal: AbortSignal.timeout(12000) });
-    } catch { throw new Error('Tock calendar request failed or timed out.'); }
-    if (response.headers.get('cf-mitigated') === 'challenge') {
-      throw new Error('Tock blocked the Worker with a Cloudflare challenge; availability is unknown.');
+    response = await fetch(CALENDAR_URL, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        Origin: ORIGIN,
+        Referer: `${ORIGIN}/${venue.slug}`,
+        'User-Agent': 'restaurant-mcp/2.0',
+        'x-tock-scope': JSON.stringify(scope),
+      },
+      body: JSON.stringify({
+        businessId: Number(venue.businessId) || venue.businessId,
+        date,
+        partySize,
+      }),
+      signal: AbortSignal.timeout(12000),
+    });
+    } catch {
+      throw new Error('Tock calendar request timed out.');
+    }
+    const text = await readText(response);
+    if (challenged(response.status, text)) {
+      throw new Error('Tock blocked this request from Cloudflare (HTTP challenge). Availability could not be read from this network.');
     }
     if (!response.ok) {
-      throw new Error(`Tock calendar returned HTTP ${response.status}.${bootstrapError ? ` Venue bootstrap: ${bootstrapError}` : ''}`);
+      throw new Error(`Tock calendar returned HTTP ${response.status}.`);
     }
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    const contentType = response.headers.get('content-type') || '';
-    if (contentType.includes('text/html') || challenged(response.status, new TextDecoder().decode(bytes.slice(0, 4096)))) {
-      throw new Error('Tock returned an HTML page instead of a protobuf calendar; availability is unknown.');
+    let body: unknown;
+    try {
+      body = JSON.parse(text);
+    } catch {
+      throw new Error('Tock calendar returned a non-JSON response.');
     }
-    const seen = new Set<string>();
-    return decodeCalendar(bytes)
-      .filter(slot => slot.date === date && slot.available >= partySize &&
-        (!slot.minParty || partySize >= slot.minParty) && (!slot.maxParty || partySize <= slot.maxParty))
-      .flatMap(slot => (slot.experienceIds.length ? slot.experienceIds : ['unknown']).map(experienceId => ({
-        slotId: `${date}-${slot.time}-${experienceId}`,
-        platform: this.name,
-        time: slot.time,
-        type: `experience-${experienceId}`,
-        bookingUrl: this.buildBookingUrl(venue.slug, date, partySize),
-      })))
-      .filter(slot => { if (seen.has(slot.slotId)) return false; seen.add(slot.slotId); return true; })
-      .sort((a, b) => a.time.localeCompare(b.time));
+    const slots = slotsFromTockCalendar(body, date);
+    const slug = findDomainName(body) || venue.slug;
+    return slots.map((slot) => ({
+      ...slot,
+      bookingUrl: this.buildBookingUrl(slug, date, partySize),
+    }));
   }
 
   async makeReservation(params: ReservationParams): Promise<ReservationResult> {
     const slug = this.extractId(params.restaurantId);
+    const venue = await this.resolve(slug);
     return {
-      success: false,
-      error: 'Tock checkout must be completed on exploretock.com; no reservation has been made.',
+      success: true,
       platform: this.name,
-      bookingUrl: this.buildBookingUrl(slug, params.date, params.partySize),
+      bookingUrl: this.buildBookingUrl(venue?.slug || slug, params.date, params.partySize),
       confirmationDetails: 'Finish this Tock reservation on exploretock.com. Checkout is not completed here.',
     };
   }
@@ -287,7 +286,7 @@ export class TockPlatformClient extends BasePlatformClient {
   }
 
   async isAuthenticated(): Promise<boolean> {
-    return false;
+    return true;
   }
 
   buildBookingUrl(venueId: string, date?: string, partySize?: number): string {
@@ -306,7 +305,7 @@ export class TockPlatformClient extends BasePlatformClient {
     return { slug: cleanSlug, ...saved };
   }
 
-  private async resolve(idOrSlug: string): Promise<(SavedVenue & { slug: string; bootstrap?: TockBootstrap }) | null> {
+  private async resolve(idOrSlug: string): Promise<(SavedVenue & { slug: string }) | null> {
     const raw = idOrSlug.trim();
     if (/^\d+$/.test(raw)) return { slug: raw, businessId: raw };
 
@@ -318,23 +317,19 @@ export class TockPlatformClient extends BasePlatformClient {
     if (stored) return { slug, ...stored };
 
     try {
-      const parsed = await this.bootstrap(slug);
-      return { slug, businessId: parsed.businessId, name: parsed.name, bootstrap: parsed };
-    } catch (error) {
-      throw new Error(`Tock could not bootstrap "${slug}": ${error instanceof Error ? error.message : 'request failed'}. A saved slug/business_id can still be tried with add_tock_venue.`);
+      const response = await fetch(`${ORIGIN}/${encodeURIComponent(slug)}`, {
+        headers: { Accept: 'text/html', 'User-Agent': 'restaurant-mcp/2.0' },
+        signal: AbortSignal.timeout(8000),
+      });
+      const html = await response.text();
+      if (!challenged(response.status, html)) {
+        const parsed = businessFromTockHtml(html, slug);
+        if (parsed) return { slug, ...parsed };
+      }
+    } catch {
+      // Resolution falls through to the KV / numeric-id path.
     }
-  }
-
-  private async bootstrap(slug: string): Promise<TockBootstrap> {
-    const response = await fetch(`${ORIGIN}/${encodeURIComponent(slug)}`, {
-      headers: { Accept: 'text/html' }, signal: AbortSignal.timeout(8000),
-    });
-    const html = await response.text();
-    if (response.headers.get('cf-mitigated') === 'challenge' || challenged(response.status, html)) {
-      throw new Error('Cloudflare challenged the Worker venue request');
-    }
-    if (!response.ok) throw new Error(`venue request returned HTTP ${response.status}`);
-    return bootstrapFromHtml(html, slug);
+    return null;
   }
 
   private async readSaved(slug: string): Promise<SavedVenue | null> {
@@ -384,4 +379,3 @@ function kvKey(slug: string): string {
 }
 
 export const tockClient = new TockPlatformClient();
-
